@@ -84,6 +84,7 @@ def run_analysis(
         spacing_m,
         str(output_path),
         dataset_id,
+        log_fn=_log,
     )
     paths = analysis_output_paths_from_csv_path(csv_path)
     _log(f"[analyze] wrote csv_path={paths['csv_path']}")

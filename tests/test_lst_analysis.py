@@ -5,7 +5,9 @@ import pytest
 from PIL import Image, ImageChops
 from shapely.geometry import Polygon
 
+import analysis.runner as runner
 from analysis.runner import (
+    compute_point_means_for_scenes,
     LST_VIS_MAX_C,
     LST_VIS_MIN_C,
     SamplingPoint,
@@ -29,6 +31,7 @@ from lst_analysis import (
     analysis_output_path,
     analysis_output_paths_from_csv_path,
     analysis_output_stem,
+    compute_lst_point_means,
     deduplicate_urls,
     infer_prefecture_name,
 )
@@ -625,3 +628,109 @@ def test_draw_points_uses_fill_only_without_outline() -> None:
 def test_preview_point_radius_scales_for_100m_and_1000m() -> None:
     assert preview_point_radius(100) == 2
     assert preview_point_radius(1000) == 15
+
+
+def test_compute_lst_point_means_emits_step_logs_and_passes_logger(monkeypatch, tmp_path: Path, capsys) -> None:
+    captured: dict[str, object] = {}
+    polygon = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+
+    monkeypatch.setattr("lst_analysis._get_hdf5_urls_for_area", lambda *args, **kwargs: ["url-1", "url-2"])
+
+    class DummyDownloader:
+        def __init__(self, download_dir, workspace_dir, username, password) -> None:
+            captured["download_dir"] = download_dir
+            captured["workspace_dir"] = workspace_dir
+            captured["username"] = username
+            captured["password"] = password
+
+        def get_downloaded_file_paths(self, urls):
+            captured["urls"] = list(urls)
+            return ["/tmp/scene-a.h5"]
+
+    monkeypatch.setattr("lst_analysis.GcomDownloader", DummyDownloader)
+    monkeypatch.setattr("lst_analysis.infer_prefecture_name", lambda area_name: "京都府")
+    monkeypatch.setattr("lst_analysis.load_area_polygon", lambda *args, **kwargs: (polygon, None))
+    monkeypatch.setattr("lst_analysis.transform_polygon_to_metric", lambda value: value)
+
+    def fake_compute_point_means_for_scenes(
+        area_name,
+        prefecture_name,
+        metric_polygon,
+        hdf5_file_paths,
+        spacing_m,
+        output_path,
+        log_fn=None,
+    ):
+        captured["compute_args"] = (
+            area_name,
+            prefecture_name,
+            metric_polygon,
+            list(hdf5_file_paths),
+            spacing_m,
+            output_path,
+        )
+        captured["log_fn"] = log_fn
+        return {"csv_path": output_path}
+
+    monkeypatch.setattr("lst_analysis.compute_point_means_for_scenes", fake_compute_point_means_for_scenes)
+    monkeypatch.setattr("lst_analysis.gportal_username_and_password_from_env", lambda: ("demo-user", "demo-pass"))
+
+    csv_path = compute_lst_point_means(
+        "京都府京都市",
+        datetime(2025, 7, 1),
+        datetime(2025, 8, 31),
+        "download/custom",
+        "workspace/custom",
+        1000,
+        str(tmp_path / "out.csv"),
+    )
+
+    assert csv_path == str(tmp_path / "out.csv")
+    assert captured["urls"] == ["url-1", "url-2"]
+    assert captured["log_fn"] is not None
+    stdout = capsys.readouterr().out
+    assert "[analyze] resolving HDF5 URLs area=京都府京都市 dataset=10002019 start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
+    assert "[analyze] found 2 HDF5 URL(s); starting download" in stdout
+    assert "[analyze] downloading 2 HDF5 file(s)" in stdout
+    assert "[analyze] loading area polygon area=京都府京都市 prefecture=京都府" in stdout
+    assert "[analyze] generating sampling points spacing=1000m" in stdout
+    assert "[analyze] starting point mean aggregation file_count=1" in stdout
+    assert "[analyze] wrote analysis artifacts csv_path=" in stdout
+
+
+def test_compute_point_means_for_scenes_emits_scene_progress_logs(monkeypatch, tmp_path: Path, capsys) -> None:
+    polygon = Polygon([(0, 0), (2, 0), (2, 2), (0, 2)])
+    points = [
+        SamplingPoint(point_id=1, lon=0.5, lat=0.5, x_metric=0.0, y_metric=0.0, x_6668=0.0, y_6668=0.0),
+        SamplingPoint(point_id=2, lon=1.5, lat=1.5, x_metric=0.0, y_metric=0.0, x_6668=0.0, y_6668=0.0),
+    ]
+
+    monkeypatch.setattr(runner, "generate_grid_points", lambda metric_polygon, spacing_m: points)
+    monkeypatch.setattr(runner, "load_scene", lambda hdf5_path, sub_key: {"hdf5_path": hdf5_path, "sub_key": sub_key})
+    monkeypatch.setattr(runner, "sample_scene", lambda scene, lon, lat: (100, 0, 0))
+    monkeypatch.setattr(runner, "is_valid_qa_value", lambda value: True)
+    monkeypatch.setattr(runner, "lst_dn_to_celsius", lambda value, scene: 25.0)
+    monkeypatch.setattr(runner, "transform_polygon_to_wgs84", lambda value: value)
+    monkeypatch.setattr(runner, "write_geojson", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "write_sampling_preview", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "write_sampling_surface", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "write_summary", lambda *args, **kwargs: None)
+
+    summary = compute_point_means_for_scenes(
+        "京都府京都市",
+        "京都府",
+        polygon,
+        ["scene-a.h5", "scene-b.h5"],
+        1000,
+        str(tmp_path / "out.csv"),
+    )
+
+    assert summary["scene_count"] == 2
+    assert summary["point_count"] == 2
+    assert summary["valid_point_count"] == 2
+    stdout = capsys.readouterr().out
+    assert "[analyze] aggregating point means area=京都府京都市 prefecture=京都府 point_count=2 scene_count=2 spacing=1000m" in stdout
+    assert "[analyze] loading scene 1/2: scene-a.h5" in stdout
+    assert "[analyze] finished scene 1/2: valid_points=2 scene_count=1" in stdout
+    assert "[analyze] loading scene 2/2: scene-b.h5" in stdout
+    assert "[analyze] aggregation complete scene_count=2 valid_point_count=2 point_count=2" in stdout

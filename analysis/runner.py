@@ -48,6 +48,10 @@ _METRIC_TO_WGS84 = Transformer.from_crs(METRIC_CRS, WGS84_CRS, always_xy=True)
 _WGS84_TO_6668 = Transformer.from_crs(WGS84_CRS, JGD2011_CRS, always_xy=True)
 
 
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
 @dataclass
 class ZipFileInfo:
     prefecture_name: str
@@ -985,11 +989,19 @@ def compute_point_means_for_scenes(
     hdf5_file_paths: list[str],
     spacing_m: int,
     output_path: str,
+    log_fn: Callable[[str], None] | None = None,
 ) -> dict:
+    log = log_fn or _log
     points = generate_grid_points(metric_polygon, spacing_m)
     scene_count = 0
+    total_scenes = len(hdf5_file_paths)
+    log(
+        f"[analyze] aggregating point means area={area_name} prefecture={prefecture_name} "
+        f"point_count={len(points)} scene_count={total_scenes} spacing={spacing_m}m"
+    )
 
-    for hdf5_path in hdf5_file_paths:
+    for index, hdf5_path in enumerate(hdf5_file_paths, start=1):
+        log(f"[analyze] loading scene {index}/{total_scenes}: {hdf5_path}")
         lst_scene = load_scene(hdf5_path, "Image_data/LST")
         qa_scene = load_scene(hdf5_path, "Image_data/QA_flag")
         scene_count += 1
@@ -1010,6 +1022,11 @@ def compute_point_means_for_scenes(
             point.min_lst_c = lst_c if point.min_lst_c is None else min(point.min_lst_c, lst_c)
             point.max_lst_c = lst_c if point.max_lst_c is None else max(point.max_lst_c, lst_c)
             point.valid_count += 1
+        valid_points_so_far = sum(1 for point in points if point.valid_count > 0)
+        log(
+            f"[analyze] finished scene {index}/{total_scenes}: "
+            f"valid_points={valid_points_so_far} scene_count={scene_count}"
+        )
 
     output_path_obj = ensure_parent(output_path)
     with output_path_obj.open("w", encoding="utf-8") as handle:
@@ -1078,4 +1095,8 @@ def compute_point_means_for_scenes(
     }
     write_summary(str(summary_path), summary)
     summary["summary_path"] = str(summary_path)
+    log(
+        f"[analyze] aggregation complete scene_count={scene_count} "
+        f"valid_point_count={valid_points} point_count={len(points)}"
+    )
     return summary

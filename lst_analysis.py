@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from collections.abc import Callable
 from pathlib import Path
 
 from analysis.runner import (
@@ -26,6 +27,10 @@ def gportal_username_and_password_from_env() -> tuple[str | None, str | None]:
 
 def deduplicate_urls(urls: list[str]) -> list[str]:
     return list(dict.fromkeys(urls))
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
 
 
 def sanitize_path_component(value: str) -> str:
@@ -189,19 +194,30 @@ def compute_lst_point_means(
     spacing_m: int,
     output_path: str,
     dataset_id: str = GCOM_C_LST_DATASET_ID,
+    log_fn: Callable[[str], None] | None = None,
 ) -> str:
+    log = log_fn or _log
+    log(
+        f"[analyze] resolving HDF5 URLs area={area_name} dataset={dataset_id} "
+        f"start={start.isoformat()} end={end.isoformat()}"
+    )
     urls = _get_hdf5_urls_for_area(area_name, start, end, dataset_id)
+    log(f"[analyze] found {len(urls)} HDF5 URL(s); starting download")
     username, password = gportal_username_and_password_from_env()
     downloader = GcomDownloader(_resolve_repo_path(download_dir), _resolve_repo_path(workspace_dir), username or "", password or "")
+    log(f"[analyze] downloading {len(urls)} HDF5 file(s)")
     hdf5_file_paths = downloader.get_downloaded_file_paths(urls)
 
     prefecture_name = infer_prefecture_name(area_name)
+    log(f"[analyze] loading area polygon area={area_name} prefecture={prefecture_name}")
     polygon_wgs84, _ = load_area_polygon(area_name, prefecture_name, _resolve_repo_path(download_dir), _resolve_repo_path(workspace_dir))
     metric_polygon = transform_polygon_to_metric(polygon_wgs84)
 
     resolved_output_path = (
         (_repo_root() / output_path).resolve() if not Path(output_path).is_absolute() else Path(output_path)
     )
+    log(f"[analyze] generating sampling points spacing={spacing_m}m")
+    log(f"[analyze] starting point mean aggregation file_count={len(hdf5_file_paths)}")
     result = compute_point_means_for_scenes(
         area_name,
         prefecture_name,
@@ -209,5 +225,7 @@ def compute_lst_point_means(
         hdf5_file_paths,
         spacing_m,
         str(resolved_output_path),
+        log_fn=log,
     )
+    log(f"[analyze] wrote analysis artifacts csv_path={result['csv_path']}")
     return result["csv_path"]

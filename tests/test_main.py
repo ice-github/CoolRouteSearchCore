@@ -78,7 +78,17 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
     captured: dict[str, object] = {}
     repo_root = Path(main.__file__).resolve().parent
 
-    def fake_compute_lst_point_means(area_name, start, end, download_dir, workspace_dir, spacing_m, output_path, dataset_id):
+    def fake_compute_lst_point_means(
+        area_name,
+        start,
+        end,
+        download_dir,
+        workspace_dir,
+        spacing_m,
+        output_path,
+        dataset_id,
+        log_fn=None,
+    ):
         captured["area_name"] = area_name
         captured["start"] = start
         captured["end"] = end
@@ -87,6 +97,7 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
         captured["workspace_dir"] = workspace_dir
         captured["spacing_m"] = spacing_m
         captured["output_path"] = output_path
+        captured["log_fn"] = log_fn
         return output_path
 
     monkeypatch.setattr(main, "compute_lst_point_means", fake_compute_lst_point_means)
@@ -117,6 +128,7 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
     assert captured["download_dir"] == "download/custom"
     assert captured["workspace_dir"] == "workspace/custom"
     assert captured["spacing_m"] == 1000
+    assert captured["log_fn"] is main._log
     assert captured["output_path"] == str(
         repo_root / "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv"
     )
