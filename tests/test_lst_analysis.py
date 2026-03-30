@@ -18,6 +18,7 @@ from analysis.runner import (
     point_to_feature,
     preview_point_radius,
     sample_scene,
+    sampling_surface_topdown_camera,
     write_sampling_point_cloud,
     write_sampling_preview,
     write_sampling_surface,
@@ -361,10 +362,15 @@ def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -
     trace = figure.data[0]
 
     assert trace.type == "surface"
+    assert list(trace.x) == [136.85, 136.86]
+    assert list(trace.y) == [35.05, 35.06]
     assert trace.z == trace.surfacecolor
     assert trace.cmin is None
     assert trace.cmax is None
     assert figure.layout.scene.zaxis.range is None
+    assert figure.layout.scene.xaxis.title.text == "Longitude"
+    assert figure.layout.scene.yaxis.title.text == "Latitude"
+    assert figure.layout.scene.aspectmode == "data"
 
 
 def test_build_sampling_surface_figure_uses_actual_range_for_high_values() -> None:
@@ -490,16 +496,27 @@ def test_write_sampling_surface_views_renders_multiple_pngs(tmp_path: Path) -> N
 
     outputs = write_sampling_surface_views(tmp_path, "sampling_surface", points, 1000)
 
-    assert set(outputs) == {"iso", "low_north", "low_east"}
+    assert set(outputs) == {"topdown", "iso", "low_north", "low_east"}
     rendered = {name: Image.open(path) for name, path in outputs.items()}
     try:
         for image in rendered.values():
             assert image.size == (2400, 1800)
+        assert rendered["topdown"].tobytes() != rendered["iso"].tobytes()
         assert rendered["iso"].tobytes() != rendered["low_north"].tobytes()
         assert rendered["iso"].tobytes() != rendered["low_east"].tobytes()
     finally:
         for image in rendered.values():
             image.close()
+
+
+def test_sampling_surface_topdown_camera_is_xy_perpendicular() -> None:
+    camera = sampling_surface_topdown_camera()
+
+    assert camera["eye"]["x"] == 0.0
+    assert camera["eye"]["y"] == 0.0
+    assert camera["eye"]["z"] > 0.0
+    assert camera["up"] == {"x": 0.0, "y": 1.0, "z": 0.0}
+    assert camera["projection"] == {"type": "orthographic"}
 
 
 def test_point_cloud_render_matches_2d_preview_before_surface(tmp_path: Path) -> None:

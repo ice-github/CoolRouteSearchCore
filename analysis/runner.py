@@ -738,8 +738,8 @@ def build_sampling_surface_figure(
     points: list[SamplingPoint],
     stat: str,
 ) -> go.Figure:
-    x_values = sorted({_grid_key(point.x_metric) for point in points})
-    y_values = sorted({_grid_key(point.y_metric) for point in points})
+    x_values = sorted({_grid_key(point.lon) for point in points})
+    y_values = sorted({_grid_key(point.lat) for point in points})
     x_index = {value: index for index, value in enumerate(x_values)}
     y_index = {value: index for index, value in enumerate(y_values)}
 
@@ -748,8 +748,8 @@ def build_sampling_surface_figure(
         value_c = sampling_stat_value(point, stat)
         if value_c is None:
             continue
-        x_key = _grid_key(point.x_metric)
-        y_key = _grid_key(point.y_metric)
+        x_key = _grid_key(point.lon)
+        y_key = _grid_key(point.lat)
         z_values[y_index[y_key]][x_index[x_key]] = value_c
 
     title = sampling_stat_label(stat)
@@ -761,7 +761,7 @@ def build_sampling_surface_figure(
         colorscale=_temperature_colorscale(),
         colorbar=dict(title=title),
         connectgaps=False,
-        hovertemplate="x=%{x:.0f} m<br>y=%{y:.0f} m<br>temperature=%{z:.2f} °C<extra></extra>",
+        hovertemplate="lon=%{x:.6f}<br>lat=%{y:.6f}<br>temperature=%{z:.2f} °C<extra></extra>",
     )
 
     figure = go.Figure(data=[surface])
@@ -770,11 +770,10 @@ def build_sampling_surface_figure(
         template="plotly_white",
         margin=dict(l=0, r=0, t=50, b=0),
         scene=dict(
-            xaxis_title="Easting (m)",
-            yaxis_title="Northing (m)",
+            xaxis_title="Longitude",
+            yaxis_title="Latitude",
             zaxis_title="LST (°C)",
-            aspectmode="manual",
-            aspectratio=dict(x=1.0, y=1.0, z=0.8),
+            aspectmode="data",
         ),
     )
     return figure
@@ -784,8 +783,17 @@ def sampling_surface_view_path(prefix: str, spacing_m: int, stat: str, view_name
     return f"{prefix}_{stat}_{spacing_m}m_{view_name}.png"
 
 
+def sampling_surface_topdown_camera() -> dict:
+    return {
+        "eye": {"x": 0.0, "y": 0.0, "z": 2.5},
+        "up": {"x": 0.0, "y": 1.0, "z": 0.0},
+        "projection": {"type": "orthographic"},
+    }
+
+
 def sampling_surface_camera_presets() -> dict[str, dict]:
     return {
+        "topdown": sampling_surface_topdown_camera(),
         "iso": {
             "eye": {"x": 1.7, "y": 1.7, "z": 0.95},
             "up": {"x": 0, "y": 0, "z": 1},
