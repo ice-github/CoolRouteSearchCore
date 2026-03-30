@@ -16,9 +16,6 @@ from gcom import CSWWrapper, GcomDownloader
 from prefecture_bbox import get_administrative_bbox, load_prefecture_bboxes
 
 
-LST_DATASET_ID = "10002019"
-
-
 def gportal_username_and_password_from_env() -> tuple[str | None, str | None]:
     return os.environ.get("GPORTAL_USER"), os.environ.get("GPORTAL_PASS")
 
@@ -39,37 +36,50 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parent
 
 
-def _create_default_output_dir(area_name: str) -> Path:
+def _create_output_dir(area_name: str) -> Path:
     output_dir = _repo_root() / "workspace" / "analysis" / area_name.replace("/", "_")
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
 
-def _get_hdf5_urls_for_area(area_name: str, start: datetime, end: datetime) -> list[str]:
+def _resolve_repo_path(path: str) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else (_repo_root() / candidate)
+
+
+def _get_hdf5_urls_for_area(area_name: str, start: datetime, end: datetime, dataset_id: str) -> list[str]:
     bbox = get_administrative_bbox(area_name)
     wrapper = CSWWrapper()
-    urls = wrapper.get_hdf5_urls(LST_DATASET_ID, start, end, bbox)
+    urls = wrapper.get_hdf5_urls(dataset_id, start, end, bbox)
     return deduplicate_urls(urls)
 
 
-def estimate_sampling_load(area_name: str, start: datetime, end: datetime, spacings_m: list[int]) -> list[dict]:
-    urls = _get_hdf5_urls_for_area(area_name, start, end)
-    download_dir = _repo_root() / "download"
-    workspace_dir = _repo_root() / "workspace"
+def estimate_sampling_load(
+    area_name: str,
+    start: datetime,
+    end: datetime,
+    dataset_id: str,
+    download_dir: str,
+    workspace_dir: str,
+    spacings_m: list[int],
+) -> list[dict]:
+    urls = _get_hdf5_urls_for_area(area_name, start, end, dataset_id)
+    resolved_download_dir = _resolve_repo_path(download_dir)
+    resolved_workspace_dir = _resolve_repo_path(workspace_dir)
     prefecture_name = infer_prefecture_name(area_name)
-    polygon_wgs84, _ = load_area_polygon(area_name, prefecture_name, download_dir, workspace_dir)
+    polygon_wgs84, _ = load_area_polygon(area_name, prefecture_name, resolved_download_dir, resolved_workspace_dir)
     metric_polygon = transform_polygon_to_metric(polygon_wgs84)
     result = estimate_sampling_load_for_polygon(area_name, prefecture_name, metric_polygon, len(urls), spacings_m)
-    output_dir = _create_default_output_dir(area_name)
+    output_dir = _create_output_dir(area_name)
     (output_dir / "load_estimate.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result["estimates"]
 
 
-def generate_sampling_points(area_name: str, spacing_m: int, output_dir: str) -> dict:
-    download_dir = _repo_root() / "download"
-    workspace_dir = _repo_root() / "workspace"
+def generate_sampling_points(area_name: str, spacing_m: int, output_dir: str, download_dir: str, workspace_dir: str) -> dict:
+    resolved_download_dir = _resolve_repo_path(download_dir)
+    resolved_workspace_dir = _resolve_repo_path(workspace_dir)
     prefecture_name = infer_prefecture_name(area_name)
-    polygon_wgs84, _ = load_area_polygon(area_name, prefecture_name, download_dir, workspace_dir)
+    polygon_wgs84, _ = load_area_polygon(area_name, prefecture_name, resolved_download_dir, resolved_workspace_dir)
     metric_polygon = transform_polygon_to_metric(polygon_wgs84)
     points = generate_grid_points(metric_polygon, spacing_m)
 
@@ -126,18 +136,19 @@ def compute_lst_point_means(
     area_name: str,
     start: datetime,
     end: datetime,
+    dataset_id: str,
+    download_dir: str,
+    workspace_dir: str,
     spacing_m: int,
     output_path: str,
 ) -> str:
-    urls = _get_hdf5_urls_for_area(area_name, start, end)
+    urls = _get_hdf5_urls_for_area(area_name, start, end, dataset_id)
     username, password = gportal_username_and_password_from_env()
-    downloader = GcomDownloader("download", "workspace", username or "", password or "")
+    downloader = GcomDownloader(_resolve_repo_path(download_dir), _resolve_repo_path(workspace_dir), username or "", password or "")
     hdf5_file_paths = downloader.get_downloaded_file_paths(urls)
 
-    download_dir = _repo_root() / "download"
-    workspace_dir = _repo_root() / "workspace"
     prefecture_name = infer_prefecture_name(area_name)
-    polygon_wgs84, _ = load_area_polygon(area_name, prefecture_name, download_dir, workspace_dir)
+    polygon_wgs84, _ = load_area_polygon(area_name, prefecture_name, _resolve_repo_path(download_dir), _resolve_repo_path(workspace_dir))
     metric_polygon = transform_polygon_to_metric(polygon_wgs84)
 
     resolved_output_path = (

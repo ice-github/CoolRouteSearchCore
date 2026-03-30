@@ -21,21 +21,21 @@ uv sync --group dev
 ## 実行
 
 ```bash
-uv run python main.py download
+uv run python main.py download --prefecture 愛知 --dataset-id 10002019 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download --workspace-dir workspace
 ```
 
 `main.py` はサブコマンドで使います。
 
-- ダウンロード: `uv run python main.py download`
-- 解析: `uv run python main.py analyze`
+- ダウンロード: `uv run python main.py download --prefecture 愛知 --dataset-id 10002019 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download --workspace-dir workspace`
+- 解析: `uv run python main.py analyze --area-name 愛知県名古屋市 --start 2025-07-01 --end 2025-08-31 --dataset-id 10002019 --spacing-m 1000 --download-dir download --workspace-dir workspace --output-path workspace/analysis/愛知県名古屋市/lst_mean_local_1000m.csv`
 
 ## LST 解析
 
 名古屋市の 2025 年 7 月〜8 月 LST をサンプル点ごとに平均化するための入口として [`lst_analysis.py`](/home/ubuntu/workspace/CoolRouteSearchCore/.worktrees/nagoya-lst-analysis/lst_analysis.py) を追加しています。
 
-- `estimate_sampling_load(area_name, start, end, [1000, 100, 10])`
-- `generate_sampling_points(area_name, spacing_m, output_dir)`
-- `compute_lst_point_means(area_name, start, end, spacing_m, output_path)`
+- `estimate_sampling_load(area_name, start, end, dataset_id, download_dir, workspace_dir, [1000, 100, 10])`
+- `generate_sampling_points(area_name, spacing_m, output_dir, download_dir, workspace_dir)`
+- `compute_lst_point_means(area_name, start, end, dataset_id, download_dir, workspace_dir, spacing_m, output_path)`
 
 解析は `uv` で直接動きます。`main.py analyze` から呼ぶのがいちばん簡単です。
 
@@ -44,13 +44,21 @@ uv run python main.py analyze \
   --area-name 愛知県名古屋市 \
   --start 2025-07-01 \
   --end 2025-08-31 \
-  --spacing-m 1000
+  --dataset-id 10002019 \
+  --spacing-m 1000 \
+  --download-dir download \
+  --workspace-dir workspace \
+  --output-path workspace/analysis/愛知県名古屋市/lst_mean_local_1000m.csv
 
 uv run python main.py analyze \
   --area-name 京都府京都市 \
   --start 2025-07-01 \
   --end 2025-08-31 \
-  --spacing-m 1000
+  --dataset-id 10002019 \
+  --spacing-m 1000 \
+  --download-dir download \
+  --workspace-dir workspace \
+  --output-path workspace/analysis/京都府京都市/lst_mean_local_1000m.csv
 ```
 
 この実行で、`workspace/analysis/<area_name>/` に次が出ます。
@@ -70,8 +78,8 @@ uv run python main.py analyze \
 
 ```bash
 uv run python main.py download --prefecture 愛知
-uv run python main.py download --prefecture 京都
-uv run python main.py download --prefecture 京都 --download-dir download/kyoto --workspace-dir workspace/kyoto
+uv run python main.py download --prefecture 京都 --dataset-id 10002019 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download --workspace-dir workspace
+uv run python main.py download --prefecture 京都 --dataset-id 10002019 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download/kyoto --workspace-dir workspace/kyoto
 ```
 
 `download` は prefecture キーワードを `get_prefecture_bbox()` に渡して、CSW で対象 HDF5 の URL を取得し、未取得ファイルのみを Docker 上の Playwright でダウンロードします。
