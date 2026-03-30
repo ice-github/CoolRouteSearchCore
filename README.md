@@ -73,7 +73,7 @@ uv run python main.py analyze \
 補足:
 
 - `sampling_preview_*.png` はサンプリング点の 2D 可視化です。
-- `sampling_surface_*.html` は 3D 可視化です。各サンプリング点を 3D の球状マーカーとして表示し、エリア外形も重ねて表示します。
+- `sampling_surface_*.html` は 3D 可視化です。各サンプリング点の球状マーカーに加えて surface も重ね、エリア外形も表示します。Z 方向は見やすさのため 2 倍に強調しています。
 - `sampling_topdown_*.png` は 3D 可視化を orthographic の真上視点で描いたものです。
 - `sampling_compare_*.png` は 2D preview と 3D topdown を左右に並べた比較画像です。
 - `dataset-id` は GCOM-C LST 用の固定値 `10002019` を使います。

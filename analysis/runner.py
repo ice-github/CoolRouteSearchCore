@@ -34,6 +34,7 @@ LST_VIS_MIN_C = 20.0
 LST_VIS_MAX_C = 40.0
 LST_VIS_MISSING_COLOR = (185, 185, 185)
 LST_VIS_STATS = ("max", "mean", "min")
+SAMPLING_SURFACE_Z_SCALE = 2.0
 LST_VIS_STOPS: list[tuple[float, tuple[int, int, int]]] = [
     (0.0, (49, 54, 149)),
     (0.18, (69, 117, 180)),
@@ -786,8 +787,43 @@ def _sampling_scene_aspectratio(
     return {
         "x": max(x_span_km / horizontal_base, 0.3) * 2.4,
         "y": max(y_span_km / horizontal_base, 0.3) * 2.4,
-        "z": z_ratio,
+        "z": z_ratio * SAMPLING_SURFACE_Z_SCALE,
     }
+
+
+def _sampling_surface_grid(
+    points: list[SamplingPoint],
+    stat: str,
+) -> tuple[list[list[float | None]], list[list[float | None]], list[list[float | None]]]:
+    point_lookup = {
+        (point.x_metric, point.y_metric): point
+        for point in points
+        if sampling_stat_value(point, stat) is not None
+    }
+    x_coords = sorted({point.x_metric for point in point_lookup.values()})
+    y_coords = sorted({point.y_metric for point in point_lookup.values()})
+
+    x_grid: list[list[float | None]] = []
+    y_grid: list[list[float | None]] = []
+    z_grid: list[list[float | None]] = []
+    for y_metric in y_coords:
+        x_row: list[float | None] = []
+        y_row: list[float | None] = []
+        z_row: list[float | None] = []
+        for x_metric in x_coords:
+            point = point_lookup.get((x_metric, y_metric))
+            if point is None:
+                x_row.append(None)
+                y_row.append(None)
+                z_row.append(None)
+                continue
+            x_row.append(point.lon)
+            y_row.append(point.lat)
+            z_row.append(sampling_stat_value(point, stat))
+        x_grid.append(x_row)
+        y_grid.append(y_row)
+        z_grid.append(z_row)
+    return x_grid, y_grid, z_grid
 
 
 def build_sampling_surface_figure(
@@ -806,6 +842,21 @@ def build_sampling_surface_figure(
     z_max = max(temperatures)
     z_range = max(z_max - z_min, 1.0)
     outline_z = z_min - z_range * 0.08
+    surface_x, surface_y, surface_z = _sampling_surface_grid(valid_points, stat)
+
+    surface = go.Surface(
+        x=surface_x,
+        y=surface_y,
+        z=surface_z,
+        surfacecolor=surface_z,
+        colorscale=_temperature_colorscale(),
+        cmin=z_min,
+        cmax=z_max,
+        opacity=0.82,
+        showscale=False,
+        hovertemplate="lon=%{x:.6f}<br>lat=%{y:.6f}<br>temperature=%{z:.2f} °C<extra></extra>",
+        name="Surface",
+    )
 
     spheres = go.Scatter3d(
         x=lons,
@@ -824,7 +875,7 @@ def build_sampling_surface_figure(
         name="Samples",
     )
 
-    figure = go.Figure(data=[*_polygon_outline_traces(polygon_wgs84, outline_z), spheres])
+    figure = go.Figure(data=[*_polygon_outline_traces(polygon_wgs84, outline_z), surface, spheres])
     figure.update_layout(
         title=title,
         template="plotly_white",

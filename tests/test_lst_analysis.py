@@ -11,6 +11,7 @@ from analysis.runner import (
     compute_point_means_for_scenes,
     LST_VIS_MAX_C,
     LST_VIS_MIN_C,
+    SAMPLING_SURFACE_Z_SCALE,
     SamplingPoint,
     build_sampling_surface_figure,
     draw_points,
@@ -371,10 +372,13 @@ def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -
     ]
 
     figure = build_sampling_surface_figure(polygon, points, "mean")
-    boundary_trace, point_trace = figure.data
+    boundary_trace, surface_trace, point_trace = figure.data
 
     assert boundary_trace.type == "scatter3d"
     assert boundary_trace.mode == "lines"
+    assert surface_trace.type == "surface"
+    assert list(surface_trace.z[0]) == [24.0, 28.0]
+    assert list(surface_trace.z[1]) == [30.0, 32.0]
     assert point_trace.type == "scatter3d"
     assert point_trace.mode == "markers"
     assert list(point_trace.x) == [136.85, 136.86, 136.85, 136.86]
@@ -388,6 +392,7 @@ def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -
     assert figure.layout.scene.aspectmode == "manual"
     assert figure.layout.scene.aspectratio.x > figure.layout.scene.aspectratio.z
     assert figure.layout.scene.aspectratio.y > figure.layout.scene.aspectratio.z
+    assert figure.layout.scene.aspectratio.z > 0.42
 
 
 def test_build_sampling_surface_figure_uses_actual_range_for_high_values() -> None:
@@ -448,8 +453,12 @@ def test_build_sampling_surface_figure_uses_actual_range_for_high_values() -> No
     ]
 
     figure = build_sampling_surface_figure(polygon, points, "max")
-    point_trace = figure.data[1]
+    surface_trace = figure.data[1]
+    point_trace = figure.data[2]
 
+    assert surface_trace.type == "surface"
+    assert list(surface_trace.z[0]) == [180.0, 170.0]
+    assert list(surface_trace.z[1]) == [175.0, 182.0]
     assert point_trace.type == "scatter3d"
     assert list(point_trace.z) == [180.0, 170.0, 175.0, 182.0]
     assert figure.layout.scene.zaxis.range is None
@@ -493,10 +502,47 @@ def test_build_sampling_surface_figure_supports_multipolygon_boundary() -> None:
 
     figure = build_sampling_surface_figure(polygon, points, "mean")
 
-    assert len(figure.data) == 3
+    assert len(figure.data) == 4
     assert figure.data[0].mode == "lines"
     assert figure.data[1].mode == "lines"
-    assert figure.data[2].mode == "markers"
+    assert figure.data[2].type == "surface"
+    assert figure.data[3].mode == "markers"
+
+
+def test_build_sampling_surface_figure_doubles_z_scale_visual_ratio() -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
+    points = [
+        SamplingPoint(
+            point_id=1,
+            lon=136.85,
+            lat=35.05,
+            x_metric=1_000.0,
+            y_metric=2_000.0,
+            x_6668=1_000.0,
+            y_6668=2_000.0,
+            sum_lst_c=72.0,
+            min_lst_c=20.0,
+            max_lst_c=28.0,
+            valid_count=3,
+        ),
+        SamplingPoint(
+            point_id=2,
+            lon=136.86,
+            lat=35.05,
+            x_metric=2_000.0,
+            y_metric=2_000.0,
+            x_6668=2_000.0,
+            y_6668=2_000.0,
+            sum_lst_c=84.0,
+            min_lst_c=24.0,
+            max_lst_c=30.0,
+            valid_count=3,
+        ),
+    ]
+
+    figure = build_sampling_surface_figure(polygon, points, "mean")
+
+    assert figure.layout.scene.aspectratio.z == pytest.approx(0.18 * SAMPLING_SURFACE_Z_SCALE)
 
 
 def test_write_sampling_surface_views_renders_multiple_pngs(monkeypatch, tmp_path: Path) -> None:
