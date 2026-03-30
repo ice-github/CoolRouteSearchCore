@@ -1,9 +1,0 @@
-{
-  "name": "coolroutesearchcore-takt",
-  "private": true,
-  "scripts": {
-    "takt": "npx --yes takt@latest",
-    "takt:run": "npx --yes takt@latest run",
-    "takt:list": "npx --yes takt@latest list"
-  }
-}
