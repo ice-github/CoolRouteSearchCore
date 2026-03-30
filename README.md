@@ -23,9 +23,9 @@ uv sync --group dev
 
 ```bash
 uv run python main.py download \
-  --prefecture 愛知 \
-  --start 2024-01-01 \
-  --end 2024-01-02 \
+  --prefecture 愛知県 \
+  --start 2025-07-01 \
+  --end 2025-08-31 \
   --limit 1 \
   --download-dir download \
   --workspace-dir workspace
@@ -87,7 +87,7 @@ uv run python main.py analyze \
 - 取得済み HDF5 は既存の `download/` を再利用します。
 - 行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
 - HDF5 は `Image_data/LST` と `Image_data/QA_flag` を `rasterio` で直接開き、GCOM-C の等面積投影上でサンプル点評価します。
-- ダウンロードは prefecture キーワードを `get_prefecture_bbox()` に渡し、CSW で対象 HDF5 の URL を取得して、未取得ファイルのみを Docker 上の Playwright で取得します。
+- ダウンロードは prefecture 名を `get_prefecture_bbox()` に渡し、CSW で対象 HDF5 の URL を取得して、未取得ファイルのみを Docker 上の Playwright で取得します。
 
 ## Tests
 

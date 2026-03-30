@@ -4,8 +4,13 @@ from prefecture_bbox import get_administrative_bbox, get_prefecture_bbox
 from scripts.update_prefecture_bboxes import build_municipality_bboxes
 
 
-def test_get_prefecture_bbox_keeps_partial_match_behavior() -> None:
-    assert get_prefecture_bbox("愛知") == [136, 34, 138, 36]
+def test_get_prefecture_bbox_requires_exact_match() -> None:
+    assert get_prefecture_bbox("愛知県") == [136, 34, 138, 36]
+
+
+def test_get_prefecture_bbox_raises_for_partial_match() -> None:
+    with pytest.raises(ValueError):
+        get_prefecture_bbox("愛知")
 
 
 def test_get_administrative_bbox_returns_nagoya_city_bbox() -> None:

@@ -28,7 +28,7 @@ def test_gportal_example_download_writes_a_real_hdf5(tmp_path: Path) -> None:
         "10002019",
         datetime(2024, 1, 1),
         datetime(2024, 1, 2),
-        get_prefecture_bbox("愛知"),
+        get_prefecture_bbox("愛知県"),
     )
     assert urls, "expected at least one GCOM-C HDF5 URL from CSW"
 

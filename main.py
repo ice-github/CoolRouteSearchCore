@@ -28,7 +28,7 @@ def _log(message: str) -> None:
 
 
 def run_download(
-    prefecture_keyword: str,
+    prefecture_name: str,
     utc_start: datetime,
     utc_end: datetime,
     limit: int | None,
@@ -37,11 +37,11 @@ def run_download(
     dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> list[str]:
     _log(
-        f"[download] prefecture={prefecture_keyword} dataset={dataset_id} "
+        f"[download] prefecture={prefecture_name} dataset={dataset_id} "
         f"start={utc_start.isoformat()} end={utc_end.isoformat()} "
         f"download_dir={download_dir} workspace_dir={workspace_dir}"
     )
-    bbox = get_prefecture_bbox(prefecture_keyword)
+    bbox = get_prefecture_bbox(prefecture_name)
 
     csw_wrapper = CSWWrapper()
     hdf5_urls = csw_wrapper.get_hdf5_urls(dataset_id, utc_start, utc_end, bbox)
@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     download_parser = subparsers.add_parser("download", help="Download HDF5 data for a prefecture.")
-    download_parser.add_argument("--prefecture", required=True, help="Prefecture keyword used to find the bbox.")
+    download_parser.add_argument("--prefecture", required=True, help="Prefecture name used to find the bbox, such as 愛知県.")
     download_parser.add_argument(
         "--dataset-id",
         default=GCOM_C_LST_DATASET_ID,
