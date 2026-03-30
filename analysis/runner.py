@@ -3,6 +3,7 @@ import math
 import os
 import zipfile
 from dataclasses import dataclass
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -10,7 +11,7 @@ import rasterio
 import requests
 import shapefile
 from bs4 import BeautifulSoup, element
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pyproj import Transformer
 from rasterio.errors import NotGeoreferencedWarning
 from rasterio.transform import from_bounds, rowcol
@@ -27,6 +28,19 @@ WGS84_CRS = "EPSG:4326"
 JGD2011_CRS = "EPSG:6668"
 GCOM_PIXEL_SIZE_M = 3000
 STRICT_INVALID_QA_BITS = (0, 1, 5, 11, 12, 13)
+LST_VIS_MIN_C = 15.0
+LST_VIS_MAX_C = 60.0
+LST_VIS_MISSING_COLOR = (185, 185, 185)
+LST_VIS_OUTLINE_COLOR = (55, 55, 55)
+LST_VIS_STOPS: list[tuple[float, tuple[int, int, int]]] = [
+    (0.0, (49, 54, 149)),
+    (0.18, (69, 117, 180)),
+    (0.42, (116, 173, 209)),
+    (0.58, (171, 217, 233)),
+    (0.75, (254, 224, 144)),
+    (0.9, (253, 174, 97)),
+    (1.0, (165, 0, 38)),
+]
 
 _WGS84_TO_METRIC = Transformer.from_crs(WGS84_CRS, METRIC_CRS, always_xy=True)
 _METRIC_TO_WGS84 = Transformer.from_crs(METRIC_CRS, WGS84_CRS, always_xy=True)
@@ -388,6 +402,9 @@ def write_geojson(path_str: str, features: list[dict]) -> str:
 
 
 def point_to_feature(point: SamplingPoint, spacing_m: int) -> dict:
+    mean_lst_c = None
+    if point.valid_count > 0:
+        mean_lst_c = point.sum_lst_c / point.valid_count
     return {
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": [point.lon, point.lat]},
@@ -399,6 +416,8 @@ def point_to_feature(point: SamplingPoint, spacing_m: int) -> dict:
             "y_6668": point.y_6668,
             "x_metric_m": point.x_metric,
             "y_metric_m": point.y_metric,
+            "valid_count": point.valid_count,
+            "mean_lst_c": None if mean_lst_c is None else round(mean_lst_c, 6),
         },
     }
 
@@ -437,6 +456,41 @@ def draw_polygon_outline(draw: ImageDraw.ImageDraw, polygon: Polygon, bounds: tu
             draw.polygon(ring, fill=(255, 255, 255), outline=(60, 80, 100))
 
 
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def interpolate_rgb(
+    start: tuple[int, int, int],
+    end: tuple[int, int, int],
+    fraction: float,
+) -> tuple[int, int, int]:
+    return tuple(
+        int(round(start[index] + (end[index] - start[index]) * fraction))
+        for index in range(3)
+    )
+
+
+def temperature_to_color(
+    value_c: float,
+    minimum_c: float = LST_VIS_MIN_C,
+    maximum_c: float = LST_VIS_MAX_C,
+) -> tuple[int, int, int]:
+    if maximum_c <= minimum_c:
+        return LST_VIS_STOPS[-1][1]
+    normalized = clamp((value_c - minimum_c) / (maximum_c - minimum_c), 0.0, 1.0)
+    for index in range(len(LST_VIS_STOPS) - 1):
+        left_position, left_color = LST_VIS_STOPS[index]
+        right_position, right_color = LST_VIS_STOPS[index + 1]
+        if normalized <= right_position:
+            span = right_position - left_position
+            if span <= 0:
+                return right_color
+            local = (normalized - left_position) / span
+            return interpolate_rgb(left_color, right_color, local)
+    return LST_VIS_STOPS[-1][1]
+
+
 def draw_points(
     draw: ImageDraw.ImageDraw,
     points: list[SamplingPoint],
@@ -445,13 +499,22 @@ def draw_points(
     height: int,
     padding: int,
     radius: int,
-    coord_fn,
-    ) -> None:
+    coord_fn: Callable[[SamplingPoint], tuple[float, float]],
+    value_fn: Callable[[SamplingPoint], float | None] | None = None,
+) -> None:
     for point in points:
         x, y = coord_fn(point)
         px, py = scale_xy(x, y, bounds, width, height, padding)
-        color = (204, 38, 41) if point.valid_count == 0 else (47, 128, 237)
-        draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=color)
+        if value_fn is None:
+            color = (102, 102, 102) if point.valid_count == 0 else (47, 128, 237)
+        else:
+            value_c = value_fn(point)
+            color = LST_VIS_MISSING_COLOR if value_c is None else temperature_to_color(value_c)
+        draw.ellipse(
+            (px - radius, py - radius, px + radius, py + radius),
+            fill=color,
+            outline=LST_VIS_OUTLINE_COLOR,
+        )
 
 
 def preview_canvas_size(
@@ -487,6 +550,8 @@ def write_sampling_preview(
     points: list[SamplingPoint],
     spacing_m: int,
     footprint_wgs84: Polygon | None = None,
+    value_fn: Callable[[SamplingPoint], float | None] | None = None,
+    legend_title: str = "Mean LST (°C)",
 ) -> str:
     path = ensure_parent(path_str)
     point_radius = 1 if spacing_m <= 100 else 2 if spacing_m <= 500 else 3
@@ -500,6 +565,7 @@ def write_sampling_preview(
         height=preview_canvas_size(polygon_wgs84.bounds, spacing_m)[1],
         padding=padding,
         coord_fn=lambda point: (point.lon, point.lat),
+        value_fn=value_fn,
         footprint_wgs84=footprint_wgs84,
     )
     if spacing_m <= 1000:
@@ -513,6 +579,13 @@ def write_sampling_preview(
             right = min(image.size[0], bbox[2] + trim_margin)
             lower = min(image.size[1], bbox[3] + trim_margin)
             image = image.crop((left, upper, right, lower))
+    if value_fn is not None:
+        image = append_temperature_legend(
+            image,
+            title=legend_title,
+            minimum_c=LST_VIS_MIN_C,
+            maximum_c=LST_VIS_MAX_C,
+        )
     image.save(path)
     return str(path)
 
@@ -526,6 +599,7 @@ def _render_preview_panel(
     height: int,
     padding: int,
     coord_fn,
+    value_fn: Callable[[SamplingPoint], float | None] | None = None,
     footprint_wgs84: Polygon | None = None,
     bounds_override: tuple[float, float, float, float] | None = None,
 ) -> Image.Image:
@@ -535,8 +609,65 @@ def _render_preview_panel(
     draw_polygon_outline(draw, polygon, bounds, width, height, padding)
     if footprint_wgs84 is not None:
         draw_polygon_outline(draw, footprint_wgs84, bounds, width, height, padding)
-    draw_points(draw, points, bounds, width, height, padding, point_radius, coord_fn)
+    draw_points(draw, points, bounds, width, height, padding, point_radius, coord_fn, value_fn=value_fn)
     return image
+
+
+def _load_legend_font(size: int) -> ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size=size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def append_temperature_legend(
+    image: Image.Image,
+    title: str,
+    minimum_c: float,
+    maximum_c: float,
+) -> Image.Image:
+    legend_width = 270
+    canvas = Image.new("RGB", (image.width + legend_width, image.height), (255, 255, 255))
+    canvas.paste(image, (0, 0))
+    draw = ImageDraw.Draw(canvas)
+    font_title = _load_legend_font(24)
+    font_label = _load_legend_font(18)
+    font_small = _load_legend_font(16)
+
+    left = image.width + 24
+    top = 32
+    draw.text((left, top), title, fill=(25, 25, 25), font=font_title)
+    draw.text((left, top + 30), f"Fixed scale: {minimum_c:.0f} to {maximum_c:.0f} °C", fill=(90, 90, 90), font=font_small)
+
+    bar_top = top + 74
+    bar_bottom = min(canvas.height - 70, bar_top + 420)
+    bar_left = left + 32
+    bar_right = bar_left + 28
+
+    for y in range(bar_top, bar_bottom):
+        fraction = 1.0 - ((y - bar_top) / max(bar_bottom - bar_top - 1, 1))
+        value_c = minimum_c + (maximum_c - minimum_c) * fraction
+        color = temperature_to_color(value_c, minimum_c, maximum_c)
+        draw.line((bar_left, y, bar_right, y), fill=color, width=1)
+
+    draw.rectangle((bar_left, bar_top, bar_right, bar_bottom), outline=(50, 50, 50), width=1)
+
+    tick_count = 6
+    for index in range(tick_count):
+        fraction = index / (tick_count - 1)
+        value_c = minimum_c + (maximum_c - minimum_c) * fraction
+        y = int(round(bar_bottom - fraction * (bar_bottom - bar_top)))
+        draw.line((bar_right + 2, y, bar_right + 12, y), fill=(50, 50, 50), width=1)
+        draw.text((bar_right + 16, y - 9), f"{value_c:.0f}", fill=(30, 30, 30), font=font_label)
+
+    draw.text((bar_left, bar_bottom + 16), "cold", fill=(90, 90, 90), font=font_small)
+    draw.text((bar_right - 18, bar_top - 28), "hot", fill=(90, 90, 90), font=font_small)
+    draw.rectangle(
+        (left + 8, bar_top - 8, canvas.width - 18, min(canvas.height - 24, bar_bottom + 56)),
+        outline=(210, 210, 210),
+        width=1,
+    )
+    return canvas
 
 
 def write_summary(path_str: str, summary: dict) -> str:
@@ -642,7 +773,13 @@ def compute_point_means_for_scenes(
         str(boundary_geojson_path),
         [polygon_to_feature(polygon_wgs84, {"area_name": area_name, "prefecture_name": prefecture_name})],
     )
-    write_sampling_preview(str(preview_path), polygon_wgs84, points, spacing_m)
+    write_sampling_preview(
+        str(preview_path),
+        polygon_wgs84,
+        points,
+        spacing_m,
+        value_fn=lambda point: None if point.valid_count == 0 else point.sum_lst_c / point.valid_count,
+    )
     if footprint_metric is not None:
         write_sampling_preview(
             str(scene_preview_path),
@@ -650,6 +787,7 @@ def compute_point_means_for_scenes(
             points,
             spacing_m,
             transform_polygon_to_wgs84(footprint_metric),
+            value_fn=lambda point: None if point.valid_count == 0 else point.sum_lst_c / point.valid_count,
         )
 
     valid_points = sum(1 for point in points if point.valid_count > 0)
@@ -668,6 +806,8 @@ def compute_point_means_for_scenes(
         "scene_preview_path": str(scene_preview_path),
         "csv_path": str(output_path_obj),
         "approx_unique_pixels_per_scene": estimate_unique_pixels(area_m2, spacing_m),
+        "lst_visualization_min_c": LST_VIS_MIN_C,
+        "lst_visualization_max_c": LST_VIS_MAX_C,
     }
     write_summary(str(summary_path), summary)
     summary["summary_path"] = str(summary_path)

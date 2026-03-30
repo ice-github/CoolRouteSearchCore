@@ -3,7 +3,17 @@ from pathlib import Path
 import pytest
 from shapely.geometry import Polygon
 
-from analysis.runner import generate_grid_points, load_scene, sample_scene, transform_polygon_to_metric
+from analysis.runner import (
+    LST_VIS_MAX_C,
+    LST_VIS_MIN_C,
+    SamplingPoint,
+    generate_grid_points,
+    load_scene,
+    point_to_feature,
+    sample_scene,
+    temperature_to_color,
+    transform_polygon_to_metric,
+)
 from lst_analysis import deduplicate_urls, infer_prefecture_name
 
 
@@ -61,3 +71,34 @@ def test_transform_polygon_to_metric_preserves_polygon_shape() -> None:
     transformed = transform_polygon_to_metric(polygon)
 
     assert transformed.area > 0
+
+
+def test_temperature_to_color_clips_to_fixed_scale() -> None:
+    low = temperature_to_color(LST_VIS_MIN_C - 10)
+    mid = temperature_to_color((LST_VIS_MIN_C + LST_VIS_MAX_C) / 2)
+    high = temperature_to_color(LST_VIS_MAX_C + 10)
+
+    assert low == temperature_to_color(LST_VIS_MIN_C)
+    assert high == temperature_to_color(LST_VIS_MAX_C)
+    assert low != high
+    assert mid != low
+    assert mid != high
+
+
+def test_point_to_feature_includes_mean_lst_c() -> None:
+    point = SamplingPoint(
+        point_id=1,
+        lon=136.9,
+        lat=35.1,
+        x_metric=1_000.0,
+        y_metric=2_000.0,
+        x_6668=1_000.0,
+        y_6668=2_000.0,
+        sum_lst_c=72.0,
+        valid_count=3,
+    )
+
+    feature = point_to_feature(point, 1000)
+
+    assert feature["properties"]["valid_count"] == 3
+    assert feature["properties"]["mean_lst_c"] == 24.0

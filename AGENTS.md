@@ -39,3 +39,5 @@
 - Preserve `GcomDownloader` public behavior unless callers are updated in the same change.
 - Keep Docker invocation compatible with both local shells and GitHub Actions runners.
 - Do not create or edit files outside this repository unless the user explicitly asks for it.
+- Before starting implementation work, create and use a dedicated worktree for the task.
+- When the prompt requirements are satisfied, sync the finished changes back to `main`.
