@@ -2,31 +2,49 @@ name: G-Portal Integration
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 17 * * *"
 
 jobs:
   integration:
-    if: ${{ secrets.GPORTAL_USER != '' && secrets.GPORTAL_PASS != '' }}
     runs-on: ubuntu-latest
     env:
       GPORTAL_USER: ${{ secrets.GPORTAL_USER }}
       GPORTAL_PASS: ${{ secrets.GPORTAL_PASS }}
-      RUN_GPORTAL_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check G-Portal credentials
+        id: preflight
+        run: |
+          if [ -n "${GPORTAL_USER}" ] && [ -n "${GPORTAL_PASS}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "G-Portal integration is enabled."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "G-Portal integration is skipped because GPORTAL_USER or GPORTAL_PASS is not set."
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.preflight.outputs.enabled == 'true'
         with:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v5
+        if: steps.preflight.outputs.enabled == 'true'
 
       - name: Verify Docker
+        if: steps.preflight.outputs.enabled == 'true'
         run: docker version
 
       - name: Install Python dependencies
+        if: steps.preflight.outputs.enabled == 'true'
         run: uv sync --group dev
 
       - name: Run G-Portal integration test
+        if: steps.preflight.outputs.enabled == 'true'
+        env:
+          RUN_GPORTAL_INTEGRATION: "1"
         run: uv run pytest tests/test_gportal_integration.py
+
+      - name: Report skipped integration run
+        if: steps.preflight.outputs.enabled != 'true'
+        run: echo "Skipping G-Portal integration workflow because repository secrets are not configured."

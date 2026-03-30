@@ -97,8 +97,9 @@ uv run python -m compileall gcom.py main.py administrative_division.py prefectur
 
 ## GitHub Actions
 
-GitHub Actions では `workflow_dispatch` または定期実行での実ダウンロード確認を行います。
+GitHub Actions では `workflow_dispatch` の手動実行で実ダウンロード確認を行います。
 `tests/test_gportal_integration.py` は実際に G-Portal から 1 件ダウンロードし、ファイルが書き込まれることを確認します。
+workflow では `secrets` を job-level `if` で直接判定せず、step-level の preflight で確認します。credentials 未設定時は失敗ではなくスキップ扱いになります。
 
 GitHub Secrets:
 
