@@ -26,6 +26,7 @@
 - The host writes a temporary job file into `workspace/` and mounts it into the container.
 - Downloads are written into `download/`.
 - GitHub Actions workflows live in `.github/workflows/`.
+- For LST analysis visual checks, render the 3D sampling points first as sphere-like markers, compare that image against the 2D preview, and only then render the surface output.
 
 ## G-Portal Assumptions
 - Login URL: `https://gportal.jaxa.jp/gpr/auth?`

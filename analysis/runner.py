@@ -518,6 +518,38 @@ def draw_points(
         )
 
 
+def draw_point_spheres(
+    draw: ImageDraw.ImageDraw,
+    points: list[SamplingPoint],
+    bounds: tuple[float, float, float, float],
+    width: int,
+    height: int,
+    padding: int,
+    radius: int,
+) -> None:
+    outer_radius = max(1, radius + 1)
+    inner_radius = max(1, radius - 1)
+    highlight_radius = max(1, radius // 2)
+    for point in points:
+        px, py = scale_xy(point.lon, point.lat, bounds, width, height, padding)
+        draw.ellipse(
+            (px - outer_radius, py - outer_radius, px + outer_radius, py + outer_radius),
+            fill=(33, 92, 178),
+        )
+        draw.ellipse(
+            (px - radius, py - radius, px + radius, py + radius),
+            fill=(47, 128, 237),
+        )
+        draw.ellipse(
+            (px - inner_radius, py - inner_radius, px + inner_radius, py + inner_radius),
+            fill=(125, 179, 255),
+        )
+        draw.ellipse(
+            (px - highlight_radius, py - highlight_radius, px + highlight_radius, py + highlight_radius),
+            fill=(208, 231, 255),
+        )
+
+
 def preview_canvas_size(
     bounds: tuple[float, float, float, float],
     spacing_m: int,
@@ -597,6 +629,35 @@ def write_sampling_preview(
             minimum_c=LST_VIS_MIN_C,
             maximum_c=LST_VIS_MAX_C,
         )
+    image.save(path)
+    return str(path)
+
+
+def write_sampling_point_cloud(
+    path_str: str,
+    polygon_wgs84: Polygon,
+    points: list[SamplingPoint],
+    spacing_m: int,
+) -> str:
+    path = ensure_parent(path_str)
+    point_radius = preview_point_radius(spacing_m)
+    padding = max(16 if spacing_m <= 100 else 48, point_radius * 2 + 8)
+    width, height = preview_canvas_size(polygon_wgs84.bounds, spacing_m)
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    draw_polygon_outline(draw, polygon_wgs84, polygon_wgs84.bounds, width, height, padding)
+    draw_point_spheres(draw, points, polygon_wgs84.bounds, width, height, padding, point_radius)
+    if spacing_m <= 1000:
+        trim_margin = 12
+        background = Image.new("RGB", image.size, (255, 255, 255))
+        diff = ImageChops.difference(image, background)
+        bbox = diff.getbbox()
+        if bbox is not None:
+            left = max(0, bbox[0] - trim_margin)
+            upper = max(0, bbox[1] - trim_margin)
+            right = min(image.size[0], bbox[2] + trim_margin)
+            lower = min(image.size[1], bbox[3] + trim_margin)
+            image = image.crop((left, upper, right, lower))
     image.save(path)
     return str(path)
 

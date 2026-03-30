@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 from shapely.geometry import Polygon
 
 from analysis.runner import (
@@ -16,6 +16,9 @@ from analysis.runner import (
     point_to_feature,
     preview_point_radius,
     sample_scene,
+    write_sampling_point_cloud,
+    write_sampling_preview,
+    write_sampling_surface,
     write_sampling_preview_set,
     write_sampling_surface_set,
     write_sampling_surface_views,
@@ -32,6 +35,58 @@ from lst_analysis import (
 
 
 SAMPLE_HDF5 = Path("/home/ubuntu/workspace/CoolRouteSearchCore/download/GC1SG1_20240101A01D_T0529_L2SG_LST_Q_3000.h5")
+
+
+def _looks_like_point_pixel(pixel: tuple[int, int, int]) -> bool:
+    red, green, blue = pixel
+    return blue > 180 and (blue - max(red, green)) > 40
+
+
+def _point_centroids(image: Image.Image) -> list[tuple[float, float]]:
+    rgb_image = image.convert("RGB")
+    width, height = rgb_image.size
+    pixels = rgb_image.load()
+    visited = [[False for _ in range(width)] for _ in range(height)]
+    centroids: list[tuple[float, float]] = []
+
+    for y in range(height):
+        for x in range(width):
+            if visited[y][x] or not _looks_like_point_pixel(pixels[x, y]):
+                continue
+
+            stack = [(x, y)]
+            visited[y][x] = True
+            count = 0
+            sum_x = 0.0
+            sum_y = 0.0
+
+            while stack:
+                current_x, current_y = stack.pop()
+                count += 1
+                sum_x += current_x
+                sum_y += current_y
+                for neighbor_y in range(max(0, current_y - 1), min(height, current_y + 2)):
+                    for neighbor_x in range(max(0, current_x - 1), min(width, current_x + 2)):
+                        if visited[neighbor_y][neighbor_x]:
+                            continue
+                        if not _looks_like_point_pixel(pixels[neighbor_x, neighbor_y]):
+                            continue
+                        visited[neighbor_y][neighbor_x] = True
+                        stack.append((neighbor_x, neighbor_y))
+
+            centroids.append((sum_x / count, sum_y / count))
+
+    return sorted(centroids, key=lambda value: (value[1], value[0]))
+
+
+def _normalized_centroids(image: Image.Image) -> list[tuple[float, float]]:
+    rgb_image = image.convert("RGB")
+    background = Image.new("RGB", rgb_image.size, (255, 255, 255))
+    bbox = ImageChops.difference(rgb_image, background).getbbox()
+    if bbox is not None:
+        rgb_image = rgb_image.crop(bbox)
+    width, height = rgb_image.size
+    return [(x / width, y / height) for x, y in _point_centroids(rgb_image)]
 
 
 def test_deduplicate_urls_preserves_order() -> None:
@@ -442,6 +497,88 @@ def test_write_sampling_surface_views_renders_multiple_pngs(tmp_path: Path) -> N
     finally:
         for image in rendered.values():
             image.close()
+
+
+def test_point_cloud_render_matches_2d_preview_before_surface(tmp_path: Path) -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
+    points = [
+        SamplingPoint(
+            point_id=1,
+            lon=136.82,
+            lat=35.02,
+            x_metric=1_000.0,
+            y_metric=2_000.0,
+            x_6668=1_000.0,
+            y_6668=2_000.0,
+            sum_lst_c=72.0,
+            min_lst_c=20.0,
+            max_lst_c=28.0,
+            valid_count=3,
+        ),
+        SamplingPoint(
+            point_id=2,
+            lon=136.88,
+            lat=35.02,
+            x_metric=2_000.0,
+            y_metric=2_000.0,
+            x_6668=2_000.0,
+            y_6668=2_000.0,
+            sum_lst_c=84.0,
+            min_lst_c=24.0,
+            max_lst_c=30.0,
+            valid_count=3,
+        ),
+        SamplingPoint(
+            point_id=3,
+            lon=136.82,
+            lat=35.08,
+            x_metric=1_000.0,
+            y_metric=3_000.0,
+            x_6668=1_000.0,
+            y_6668=3_000.0,
+            sum_lst_c=90.0,
+            min_lst_c=25.0,
+            max_lst_c=31.0,
+            valid_count=3,
+        ),
+        SamplingPoint(
+            point_id=4,
+            lon=136.88,
+            lat=35.08,
+            x_metric=2_000.0,
+            y_metric=3_000.0,
+            x_6668=2_000.0,
+            y_6668=3_000.0,
+            sum_lst_c=96.0,
+            min_lst_c=26.0,
+            max_lst_c=32.0,
+            valid_count=3,
+        ),
+    ]
+
+    preview_path = tmp_path / "preview.png"
+    point_cloud_path = tmp_path / "point_cloud.png"
+    surface_path = tmp_path / "surface.html"
+
+    write_sampling_preview(str(preview_path), polygon, points, 1000)
+    write_sampling_point_cloud(str(point_cloud_path), polygon, points, 1000)
+    write_sampling_surface(str(surface_path), points, "mean")
+
+    preview_image = Image.open(preview_path)
+    point_cloud_image = Image.open(point_cloud_path)
+    try:
+        preview_centroids = _normalized_centroids(preview_image)
+        point_cloud_centroids = _normalized_centroids(point_cloud_image)
+
+        assert len(preview_centroids) == len(point_cloud_centroids) == 4
+        for (preview_x, preview_y), (cloud_x, cloud_y) in zip(preview_centroids, point_cloud_centroids):
+            assert abs(preview_x - cloud_x) <= 0.08
+            assert abs(preview_y - cloud_y) <= 0.08
+    finally:
+        preview_image.close()
+        point_cloud_image.close()
+
+    assert surface_path.exists()
 
 
 def test_draw_points_uses_fill_only_without_outline() -> None:
