@@ -27,7 +27,10 @@
 - The host writes a temporary job file into `workspace/` and mounts it into the container.
 - Downloads are written into `download/`.
 - GitHub Actions workflows live in `.github/workflows/`.
-- For LST analysis visual checks, render the 3D sampling points first as sphere-like markers, compare that image against the 2D preview, and only then render the surface output.
+- For LST analysis visual checks, the human-facing comparison image must compare the 2D preview against the 3D sampling points rendered as sphere-like markers.
+- Do not use the 3D surface as the right-hand comparison image for that visual check.
+- When rendering that comparison from 3D to 2D, use a camera perpendicular to the XY plane with orthographic projection.
+- Render the final 3D surface output only after the point-cloud comparison passes.
 
 ## G-Portal Assumptions
 - Login URL: `https://gportal.jaxa.jp/gpr/auth?`
