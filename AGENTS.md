@@ -49,6 +49,7 @@
 - Preserve `GcomDownloader` public behavior unless callers are updated in the same change.
 - Keep Docker invocation compatible with both local shells and GitHub Actions runners.
 - Prefer TAKT's queued task flow and `takt run`, which executes tasks in a `git worktree`.
+- Apply the same TAKT workflow when working through coding agents such as Codex, Claude Code, or GitHub Copilot; agent-driven changes should also go through TAKT rather than bypassing it.
 - If you are not using TAKT for a change, perform work on a `git worktree`, not directly on the main working tree.
 - Merge a worktree back only after the agent has responded correctly to the prompt and the requested work has been validated.
 - Do not use `~/.takt`; keep TAKT configuration inside this repository.
