@@ -36,6 +36,36 @@ uv run python main.py
 
 解析は `uv` で直接動きます。
 
+`uv run python main.py` は G-Portal からのダウンロード用で、`sampling_preview_*.png` の生成までは行いません。  
+可視化付きの `sampling_preview` を作るときは、`compute_lst_point_means` を直接呼びます。
+
+```bash
+uv run python - <<'PY'
+from datetime import datetime
+from lst_analysis import compute_lst_point_means
+
+area_name = "愛知県名古屋市"
+start = datetime(2025, 7, 1)
+end = datetime(2025, 8, 31)
+
+for spacing in (1000, 100):
+    compute_lst_point_means(
+        area_name,
+        start,
+        end,
+        spacing,
+        f"workspace/analysis/{area_name}/lst_mean_local_{spacing}m.csv",
+    )
+PY
+```
+
+この実行で、`workspace/analysis/愛知県名古屋市/` に次が出ます。
+
+- `sampling_preview_{mean,min,max}_*.png`
+- `sampling_points_*.geojson`
+- `sampling_summary_*.json`
+- `lst_mean_local_*.csv`
+
 - 取得済み HDF5 は既存の `download/` を再利用します。
 - 最新の行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
 - HDF5 は `Image_data/LST` と `Image_data/QA_flag` を `rasterio` で直接開き、GCOM-C の等面積投影上でサンプル点評価します。
