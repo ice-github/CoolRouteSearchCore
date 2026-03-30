@@ -31,7 +31,7 @@ STRICT_INVALID_QA_BITS = (0, 1, 5, 11, 12, 13)
 LST_VIS_MIN_C = 20.0
 LST_VIS_MAX_C = 40.0
 LST_VIS_MISSING_COLOR = (185, 185, 185)
-LST_VIS_OUTLINE_COLOR = (55, 55, 55)
+LST_VIS_STATS = ("max", "mean", "min")
 LST_VIS_STOPS: list[tuple[float, tuple[int, int, int]]] = [
     (0.0, (49, 54, 149)),
     (0.18, (69, 117, 180)),
@@ -67,6 +67,8 @@ class SamplingPoint:
     y_6668: float
     inside_city: bool = True
     sum_lst_c: float = 0.0
+    min_lst_c: float | None = None
+    max_lst_c: float | None = None
     valid_count: int = 0
 
 
@@ -402,9 +404,6 @@ def write_geojson(path_str: str, features: list[dict]) -> str:
 
 
 def point_to_feature(point: SamplingPoint, spacing_m: int) -> dict:
-    mean_lst_c = None
-    if point.valid_count > 0:
-        mean_lst_c = point.sum_lst_c / point.valid_count
     return {
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": [point.lon, point.lat]},
@@ -417,7 +416,9 @@ def point_to_feature(point: SamplingPoint, spacing_m: int) -> dict:
             "x_metric_m": point.x_metric,
             "y_metric_m": point.y_metric,
             "valid_count": point.valid_count,
-            "mean_lst_c": None if mean_lst_c is None else round(mean_lst_c, 6),
+            "min_lst_c": None if point.min_lst_c is None else round(point.min_lst_c, 6),
+            "mean_lst_c": None if point.valid_count == 0 else round(point.sum_lst_c / point.valid_count, 6),
+            "max_lst_c": None if point.max_lst_c is None else round(point.max_lst_c, 6),
         },
     }
 
@@ -513,7 +514,6 @@ def draw_points(
         draw.ellipse(
             (px - radius, py - radius, px + radius, py + radius),
             fill=color,
-            outline=LST_VIS_OUTLINE_COLOR,
         )
 
 
@@ -611,6 +611,59 @@ def _render_preview_panel(
         draw_polygon_outline(draw, footprint_wgs84, bounds, width, height, padding)
     draw_points(draw, points, bounds, width, height, padding, point_radius, coord_fn, value_fn=value_fn)
     return image
+
+
+def sampling_stat_value(point: SamplingPoint, stat: str) -> float | None:
+    if point.valid_count == 0:
+        return None
+    if stat == "min":
+        return point.min_lst_c
+    if stat == "mean":
+        return point.sum_lst_c / point.valid_count
+    if stat == "max":
+        return point.max_lst_c
+    raise ValueError(f"unknown sampling stat: {stat}")
+
+
+def sampling_stat_label(stat: str) -> str:
+    if stat == "min":
+        return "Minimum LST (°C)"
+    if stat == "mean":
+        return "Mean LST (°C)"
+    if stat == "max":
+        return "Maximum LST (°C)"
+    raise ValueError(f"unknown sampling stat: {stat}")
+
+
+def sampling_preview_path(prefix: str, spacing_m: int, stat: str) -> str:
+    if stat == "mean":
+        return f"{prefix}_{spacing_m}m.png"
+    return f"{prefix}_{stat}_{spacing_m}m.png"
+
+
+def write_sampling_preview_set(
+    output_dir: Path,
+    prefix: str,
+    polygon_wgs84: Polygon,
+    points: list[SamplingPoint],
+    spacing_m: int,
+    footprint_wgs84: Polygon | None = None,
+    stats: tuple[str, ...] = LST_VIS_STATS,
+) -> dict[str, str]:
+    output_paths: dict[str, str] = {}
+    for stat in stats:
+        path = output_dir / sampling_preview_path(prefix, spacing_m, stat)
+        write_sampling_preview(
+            str(path),
+            polygon_wgs84,
+            points,
+            spacing_m,
+            footprint_wgs84=footprint_wgs84,
+            value_fn=lambda point, stat=stat: sampling_stat_value(point, stat),
+            legend_title=sampling_stat_label(stat),
+        )
+        output_paths[stat] = str(path)
+    return output_paths
 
 
 def _load_legend_font(size: int) -> ImageFont.ImageFont:
@@ -726,14 +779,11 @@ def compute_point_means_for_scenes(
 ) -> dict:
     points = generate_grid_points(metric_polygon, spacing_m)
     scene_count = 0
-    footprint_metric: Polygon | None = None
 
     for hdf5_path in hdf5_file_paths:
         lst_scene = load_scene(hdf5_path, "Image_data/LST")
         qa_scene = load_scene(hdf5_path, "Image_data/QA_flag")
         scene_count += 1
-        if footprint_metric is None:
-            footprint_metric = lst_scene.footprint_metric
 
         for point in points:
             sample = sample_scene(lst_scene, point.lon, point.lat)
@@ -746,25 +796,30 @@ def compute_point_means_for_scenes(
             if not is_valid_qa_value(qa_value):
                 continue
 
-            point.sum_lst_c += lst_dn_to_celsius(lst_value, lst_scene)
+            lst_c = lst_dn_to_celsius(lst_value, lst_scene)
+            point.sum_lst_c += lst_c
+            point.min_lst_c = lst_c if point.min_lst_c is None else min(point.min_lst_c, lst_c)
+            point.max_lst_c = lst_c if point.max_lst_c is None else max(point.max_lst_c, lst_c)
             point.valid_count += 1
 
     output_path_obj = ensure_parent(output_path)
     with output_path_obj.open("w", encoding="utf-8") as handle:
-        handle.write("point_id,lon,lat,x_6668,y_6668,valid_count,mean_lst_c\n")
+        handle.write("point_id,lon,lat,x_6668,y_6668,valid_count,min_lst_c,mean_lst_c,max_lst_c\n")
         for point in points:
+            min_lst_c = ""
             mean_lst_c = ""
+            max_lst_c = ""
             if point.valid_count > 0:
+                min_lst_c = f"{point.min_lst_c:.6f}" if point.min_lst_c is not None else ""
                 mean_lst_c = f"{point.sum_lst_c / point.valid_count:.6f}"
+                max_lst_c = f"{point.max_lst_c:.6f}" if point.max_lst_c is not None else ""
             handle.write(
-                f"{point.point_id},{point.lon},{point.lat},{point.x_6668},{point.y_6668},{point.valid_count},{mean_lst_c}\n"
+                f"{point.point_id},{point.lon},{point.lat},{point.x_6668},{point.y_6668},{point.valid_count},{min_lst_c},{mean_lst_c},{max_lst_c}\n"
             )
 
     output_dir = output_path_obj.parent
     points_geojson_path = output_dir / f"sampling_points_{spacing_m}m.geojson"
     boundary_geojson_path = output_dir / f"sampling_boundary_{spacing_m}m.geojson"
-    preview_path = output_dir / f"sampling_preview_{spacing_m}m.png"
-    scene_preview_path = output_dir / f"scene_coverage_preview_{spacing_m}m.png"
     summary_path = output_dir / f"sampling_summary_{spacing_m}m.json"
     polygon_wgs84 = transform_polygon_to_wgs84(metric_polygon)
 
@@ -773,22 +828,13 @@ def compute_point_means_for_scenes(
         str(boundary_geojson_path),
         [polygon_to_feature(polygon_wgs84, {"area_name": area_name, "prefecture_name": prefecture_name})],
     )
-    write_sampling_preview(
-        str(preview_path),
+    preview_paths = write_sampling_preview_set(
+        output_dir,
+        "sampling_preview",
         polygon_wgs84,
         points,
         spacing_m,
-        value_fn=lambda point: None if point.valid_count == 0 else point.sum_lst_c / point.valid_count,
     )
-    if footprint_metric is not None:
-        write_sampling_preview(
-            str(scene_preview_path),
-            polygon_wgs84,
-            points,
-            spacing_m,
-            transform_polygon_to_wgs84(footprint_metric),
-            value_fn=lambda point: None if point.valid_count == 0 else point.sum_lst_c / point.valid_count,
-        )
 
     valid_points = sum(1 for point in points if point.valid_count > 0)
     area_m2 = compute_polygon_area_m2(metric_polygon)
@@ -802,8 +848,8 @@ def compute_point_means_for_scenes(
         "approx_area_km2": round(area_m2 / 1_000_000, 6),
         "points_geojson_path": str(points_geojson_path),
         "boundary_geojson_path": str(boundary_geojson_path),
-        "preview_path": str(preview_path),
-        "scene_preview_path": str(scene_preview_path),
+        "preview_path": preview_paths["mean"],
+        "preview_paths": preview_paths,
         "csv_path": str(output_path_obj),
         "approx_unique_pixels_per_scene": estimate_unique_pixels(area_m2, spacing_m),
         "lst_visualization_min_c": LST_VIS_MIN_C,
