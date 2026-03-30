@@ -38,6 +38,8 @@ def run_download(
     utc_start: datetime = DEFAULT_DOWNLOAD_START,
     utc_end: datetime = DEFAULT_DOWNLOAD_END,
     limit: int | None = 1,
+    download_dir: str = "download",
+    workspace_dir: str = "workspace",
 ) -> list[str]:
     _log(
         f"[download] prefecture={prefecture_keyword} dataset={dataset_id} "
@@ -56,7 +58,7 @@ def run_download(
     _log(f"[download] found {len(hdf5_urls)} URL(s); starting Playwright download")
 
     username, password = gportal_username_and_password_from_env()
-    downloader = GcomDownloader("download", "workspace", username or "", password or "")
+    downloader = GcomDownloader(download_dir, workspace_dir, username or "", password or "")
     paths = downloader.get_downloaded_file_paths(hdf5_urls)
     _log(f"[download] wrote {len(paths)} file(s)")
     return paths
@@ -91,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("--start", type=_parse_datetime, default=DEFAULT_DOWNLOAD_START, help="UTC start datetime in ISO format.")
     download_parser.add_argument("--end", type=_parse_datetime, default=DEFAULT_DOWNLOAD_END, help="UTC end datetime in ISO format.")
     download_parser.add_argument("--limit", type=int, default=1, help="Maximum number of URLs to download. Use 0 for all.")
+    download_parser.add_argument("--download-dir", default="download", help="Directory where downloaded files are written.")
+    download_parser.add_argument("--workspace-dir", default="workspace", help="Workspace directory mounted into the container.")
 
     analysis_parser = subparsers.add_parser("analyze", help="Run LST analysis for an area.")
     analysis_parser.add_argument("--area-name", default=DEFAULT_ANALYSIS_AREA, help="Administrative area name such as 愛知県名古屋市.")
@@ -109,7 +113,15 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command or "download"
     if command == "download":
         limit = None if args.limit == 0 else args.limit
-        paths = run_download(args.prefecture, args.dataset_id, args.start, args.end, limit)
+        paths = run_download(
+            args.prefecture,
+            args.dataset_id,
+            args.start,
+            args.end,
+            limit,
+            args.download_dir,
+            args.workspace_dir,
+        )
         for path in paths:
             print(path)
         return 0

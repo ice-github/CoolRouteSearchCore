@@ -51,6 +51,10 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
             "2024-01-04",
             "--limit",
             "2",
+            "--download-dir",
+            "download/custom",
+            "--workspace-dir",
+            "workspace/custom",
         ]
     )
 
@@ -60,8 +64,8 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
     assert captured["utc_end"] == datetime(2024, 1, 4)
     assert captured["bbox"] == [1, 2, 3, 4]
     assert captured["urls"] == ["url-1", "url-2"]
-    assert captured["download_dir"] == "download"
-    assert captured["workspace_dir"] == "workspace"
+    assert captured["download_dir"] == "download/custom"
+    assert captured["workspace_dir"] == "workspace/custom"
     assert captured["username"] == "demo-user"
     assert captured["password"] == "demo-pass"
 

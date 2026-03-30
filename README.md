@@ -71,9 +71,11 @@ uv run python main.py analyze \
 ```bash
 uv run python main.py download --prefecture 愛知
 uv run python main.py download --prefecture 京都
+uv run python main.py download --prefecture 京都 --download-dir download/kyoto --workspace-dir workspace/kyoto
 ```
 
 `download` は prefecture キーワードを `get_prefecture_bbox()` に渡して、CSW で対象 HDF5 の URL を取得し、未取得ファイルのみを Docker 上の Playwright でダウンロードします。
+`--download-dir` と `--workspace-dir` も指定できるので、ダウンロード先を用途ごとに分けられます。
 
 ## テスト
 
