@@ -23,6 +23,7 @@
 ## Automation Notes
 - Host-side orchestration lives in `gcom.py`.
 - Container-side browser automation lives in `playwright/download_gportal.py`.
+- Playwright and Chromium run in Docker only; do not rely on host-installed browser binaries for automation or screenshots.
 - The host writes a temporary job file into `workspace/` and mounts it into the container.
 - Downloads are written into `download/`.
 - GitHub Actions workflows live in `.github/workflows/`.
