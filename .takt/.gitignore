@@ -1,0 +1,7 @@
+runs/
+tasks/
+tasks.yaml
+bookmarks.yaml
+history/
+tmp/
+cache/

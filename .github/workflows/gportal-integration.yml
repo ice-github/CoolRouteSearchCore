@@ -1,0 +1,31 @@
+name: G-Portal Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 17 * * *"
+
+jobs:
+  integration:
+    if: ${{ secrets.GPORTAL_USER != '' && secrets.GPORTAL_PASS != '' }}
+    runs-on: ubuntu-latest
+    env:
+      GPORTAL_USER: ${{ secrets.GPORTAL_USER }}
+      GPORTAL_PASS: ${{ secrets.GPORTAL_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Verify Docker
+        run: docker version
+
+      - name: Install Python dependencies
+        run: uv sync --group dev
+
+      - name: Run G-Portal example download
+        run: uv run python main.py
