@@ -10,6 +10,7 @@ from urllib.parse import urljoin
 import rasterio
 import requests
 import shapefile
+import plotly.graph_objects as go
 from bs4 import BeautifulSoup, element
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pyproj import Transformer
@@ -651,6 +652,143 @@ def sampling_preview_path(prefix: str, spacing_m: int, stat: str) -> str:
     return f"{prefix}_{stat}_{spacing_m}m.png"
 
 
+def sampling_surface_path(prefix: str, spacing_m: int, stat: str) -> str:
+    if stat == "mean":
+        return f"{prefix}_{spacing_m}m.html"
+    return f"{prefix}_{stat}_{spacing_m}m.html"
+
+
+def _temperature_colorscale() -> list[tuple[float, str]]:
+    return [
+        (position, f"rgb({red}, {green}, {blue})")
+        for position, (red, green, blue) in LST_VIS_STOPS
+    ]
+
+
+def _grid_key(value: float) -> float:
+    return round(value, 6)
+
+
+def build_sampling_surface_figure(
+    points: list[SamplingPoint],
+    stat: str,
+) -> go.Figure:
+    x_values = sorted({_grid_key(point.x_metric) for point in points})
+    y_values = sorted({_grid_key(point.y_metric) for point in points})
+    x_index = {value: index for index, value in enumerate(x_values)}
+    y_index = {value: index for index, value in enumerate(y_values)}
+
+    z_values: list[list[float]] = [[math.nan for _ in x_values] for _ in y_values]
+    for point in points:
+        value_c = sampling_stat_value(point, stat)
+        if value_c is None:
+            continue
+        x_key = _grid_key(point.x_metric)
+        y_key = _grid_key(point.y_metric)
+        z_values[y_index[y_key]][x_index[x_key]] = value_c
+
+    title = sampling_stat_label(stat)
+    surface = go.Surface(
+        x=x_values,
+        y=y_values,
+        z=z_values,
+        surfacecolor=z_values,
+        colorscale=_temperature_colorscale(),
+        colorbar=dict(title=title),
+        connectgaps=False,
+        hovertemplate="x=%{x:.0f} m<br>y=%{y:.0f} m<br>temperature=%{z:.2f} °C<extra></extra>",
+    )
+
+    figure = go.Figure(data=[surface])
+    figure.update_layout(
+        title=title,
+        template="plotly_white",
+        margin=dict(l=0, r=0, t=50, b=0),
+        scene=dict(
+            xaxis_title="Easting (m)",
+            yaxis_title="Northing (m)",
+            zaxis_title="LST (°C)",
+            aspectmode="manual",
+            aspectratio=dict(x=1.0, y=1.0, z=0.8),
+        ),
+    )
+    return figure
+
+
+def sampling_surface_view_path(prefix: str, spacing_m: int, stat: str, view_name: str) -> str:
+    return f"{prefix}_{stat}_{spacing_m}m_{view_name}.png"
+
+
+def sampling_surface_camera_presets() -> dict[str, dict]:
+    return {
+        "iso": {
+            "eye": {"x": 1.7, "y": 1.7, "z": 0.95},
+            "up": {"x": 0, "y": 0, "z": 1},
+        },
+        "low_north": {
+            "eye": {"x": 0.0, "y": -2.2, "z": 0.55},
+            "up": {"x": 0, "y": 0, "z": 1},
+        },
+        "low_east": {
+            "eye": {"x": 2.2, "y": 0.0, "z": 0.55},
+            "up": {"x": 0, "y": 0, "z": 1},
+        },
+    }
+
+
+def write_sampling_surface(
+    path_str: str,
+    points: list[SamplingPoint],
+    stat: str,
+) -> str:
+    path = ensure_parent(path_str)
+    valid_points = [point for point in points if sampling_stat_value(point, stat) is not None]
+    if not valid_points:
+        path.write_text(
+            "<html><body><p>No valid temperature samples available for 3D surface.</p></body></html>",
+            encoding="utf-8",
+        )
+        return str(path)
+
+    figure = build_sampling_surface_figure(points, stat)
+    figure.write_html(str(path), include_plotlyjs=True, full_html=True)
+    return str(path)
+
+
+def write_sampling_surface_views(
+    output_dir: Path,
+    prefix: str,
+    points: list[SamplingPoint],
+    spacing_m: int,
+    stat: str = "mean",
+    camera_presets: dict[str, dict] | None = None,
+) -> dict[str, str]:
+    figure = build_sampling_surface_figure(points, stat)
+    output_paths: dict[str, str] = {}
+    presets = camera_presets or sampling_surface_camera_presets()
+    for view_name, camera in presets.items():
+        view_figure = go.Figure(figure)
+        view_figure.update_layout(scene_camera=camera)
+        path = output_dir / sampling_surface_view_path(prefix, spacing_m, stat, view_name)
+        view_figure.write_image(str(path), format="png", width=1200, height=900, scale=2)
+        output_paths[view_name] = str(path)
+    return output_paths
+
+
+def write_sampling_surface_set(
+    output_dir: Path,
+    prefix: str,
+    points: list[SamplingPoint],
+    spacing_m: int,
+    stats: tuple[str, ...] = LST_VIS_STATS,
+) -> dict[str, str]:
+    output_paths: dict[str, str] = {}
+    for stat in stats:
+        path = output_dir / sampling_surface_path(prefix, spacing_m, stat)
+        output_paths[stat] = write_sampling_surface(str(path), points, stat)
+    return output_paths
+
+
 def write_sampling_preview_set(
     output_dir: Path,
     prefix: str,
@@ -845,6 +983,12 @@ def compute_point_means_for_scenes(
         points,
         spacing_m,
     )
+    surface_paths = write_sampling_surface_set(
+        output_dir,
+        "sampling_surface",
+        points,
+        spacing_m,
+    )
 
     valid_points = sum(1 for point in points if point.valid_count > 0)
     area_m2 = compute_polygon_area_m2(metric_polygon)
@@ -860,6 +1004,8 @@ def compute_point_means_for_scenes(
         "boundary_geojson_path": str(boundary_geojson_path),
         "preview_path": preview_paths["mean"],
         "preview_paths": preview_paths,
+        "surface_path": surface_paths["mean"],
+        "surface_paths": surface_paths,
         "csv_path": str(output_path_obj),
         "approx_unique_pixels_per_scene": estimate_unique_pixels(area_m2, spacing_m),
         "lst_visualization_min_c": LST_VIS_MIN_C,

@@ -62,6 +62,7 @@ PY
 この実行で、`workspace/analysis/愛知県名古屋市/` に次が出ます。
 
 - `sampling_preview_{mean,min,max}_*.png`
+- `sampling_surface_{mean,min,max}_*.html`
 - `sampling_points_*.geojson`
 - `sampling_summary_*.json`
 - `lst_mean_local_*.csv`
@@ -69,7 +70,7 @@ PY
 - 取得済み HDF5 は既存の `download/` を再利用します。
 - 最新の行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
 - HDF5 は `Image_data/LST` と `Image_data/QA_flag` を `rasterio` で直接開き、GCOM-C の等面積投影上でサンプル点評価します。
-- 可視化成果物として `sampling_preview_{min,mean,max}_*.png` と `sampling_points_*.geojson` を出力します。点は枠なしの塗りつぶし表示です。
+- 可視化成果物として `sampling_preview_{min,mean,max}_*.png` と `sampling_surface_{min,mean,max}_*.html` を出力します。3D は `z = 温度` と `色 = 温度` を併用し、点は枠なしの塗りつぶし表示です。
 
 ## テスト
 
