@@ -102,7 +102,7 @@ def generate_sampling_points(area_name: str, spacing_m: int, output_dir: str) ->
             for point in points
         ],
     )
-    write_sampling_preview(str(preview_path), metric_polygon, points)
+    write_sampling_preview(str(preview_path), polygon_wgs84, points, spacing_m)
 
     area_m2 = metric_polygon.area
     summary = {

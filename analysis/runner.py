@@ -10,7 +10,7 @@ import rasterio
 import requests
 import shapefile
 from bs4 import BeautifulSoup, element
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from pyproj import Transformer
 from rasterio.errors import NotGeoreferencedWarning
 from rasterio.transform import from_bounds, rowcol
@@ -128,6 +128,10 @@ def tag_corner_points(tags: dict[str, str]) -> list[tuple[float, float]]:
 
 def project_polygon_to_metric(polygon: Polygon) -> Polygon:
     return transform(_WGS84_TO_METRIC.transform, polygon)
+
+
+def transform_polygon_to_wgs84(polygon: Polygon) -> Polygon:
+    return transform(_METRIC_TO_WGS84.transform, polygon)
 
 
 def build_metric_footprint_polygon(tags: dict[str, str]) -> Polygon:
@@ -414,8 +418,12 @@ def scale_xy(x: float, y: float, bounds: tuple[float, float, float, float], widt
     scale_x = usable_width / max(max_x - min_x, 1)
     scale_y = usable_height / max(max_y - min_y, 1)
     scale = min(scale_x, scale_y)
-    px = padding + (x - min_x) * scale
-    py = height - (padding + (y - min_y) * scale)
+    drawn_width = (max_x - min_x) * scale
+    drawn_height = (max_y - min_y) * scale
+    offset_x = padding + (usable_width - drawn_width) / 2
+    offset_y = padding + (usable_height - drawn_height) / 2
+    px = offset_x + (x - min_x) * scale
+    py = height - offset_y - (y - min_y) * scale
     return int(px), int(py)
 
 
@@ -436,33 +444,99 @@ def draw_points(
     width: int,
     height: int,
     padding: int,
-) -> None:
-    radius = 3
+    radius: int,
+    coord_fn,
+    ) -> None:
     for point in points:
-        px, py = scale_xy(point.x_metric, point.y_metric, bounds, width, height, padding)
+        x, y = coord_fn(point)
+        px, py = scale_xy(x, y, bounds, width, height, padding)
         color = (204, 38, 41) if point.valid_count == 0 else (47, 128, 237)
         draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=color)
 
 
+def preview_canvas_size(
+    bounds: tuple[float, float, float, float],
+    spacing_m: int,
+    min_size: int = 420,
+) -> tuple[int, int]:
+    min_x, min_y, max_x, max_y = bounds
+    width_range = max(max_x - min_x, 1e-9)
+    height_range = max(max_y - min_y, 1e-9)
+    max_size = 1200
+    if spacing_m <= 100:
+        max_size = 9000
+        min_size = 3600
+    elif spacing_m <= 1000:
+        max_size = 6000
+        min_size = 2200
+    elif spacing_m <= 250:
+        max_size = 1800
+        min_size = 700
+    if width_range >= height_range:
+        width = max_size
+        height = max(min_size, int(round(max_size * height_range / width_range)))
+    else:
+        height = max_size
+        width = max(min_size, int(round(max_size * width_range / height_range)))
+    return width, height
+
+
 def write_sampling_preview(
     path_str: str,
-    metric_polygon: Polygon,
+    polygon_wgs84: Polygon,
     points: list[SamplingPoint],
-    footprint_metric: Polygon | None = None,
+    spacing_m: int,
+    footprint_wgs84: Polygon | None = None,
 ) -> str:
     path = ensure_parent(path_str)
-    width = 1200
-    height = 1200
-    padding = 48
-    image = Image.new("RGB", (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(image)
-    bounds = metric_polygon.bounds
-    draw_polygon_outline(draw, metric_polygon, bounds, width, height, padding)
-    if footprint_metric is not None:
-        draw_polygon_outline(draw, footprint_metric, bounds, width, height, padding)
-    draw_points(draw, points, bounds, width, height, padding)
+    point_radius = 1 if spacing_m <= 100 else 2 if spacing_m <= 500 else 3
+    padding = 16 if spacing_m <= 100 else 48
+    image = _render_preview_panel(
+        polygon_wgs84,
+        points,
+        spacing_m,
+        point_radius=point_radius,
+        width=preview_canvas_size(polygon_wgs84.bounds, spacing_m)[0],
+        height=preview_canvas_size(polygon_wgs84.bounds, spacing_m)[1],
+        padding=padding,
+        coord_fn=lambda point: (point.lon, point.lat),
+        footprint_wgs84=footprint_wgs84,
+    )
+    if spacing_m <= 1000:
+        trim_margin = 12
+        background = Image.new("RGB", image.size, (255, 255, 255))
+        diff = ImageChops.difference(image, background)
+        bbox = diff.getbbox()
+        if bbox is not None:
+            left = max(0, bbox[0] - trim_margin)
+            upper = max(0, bbox[1] - trim_margin)
+            right = min(image.size[0], bbox[2] + trim_margin)
+            lower = min(image.size[1], bbox[3] + trim_margin)
+            image = image.crop((left, upper, right, lower))
     image.save(path)
     return str(path)
+
+
+def _render_preview_panel(
+    polygon: Polygon,
+    points: list[SamplingPoint],
+    spacing_m: int,
+    point_radius: int,
+    width: int,
+    height: int,
+    padding: int,
+    coord_fn,
+    footprint_wgs84: Polygon | None = None,
+    bounds_override: tuple[float, float, float, float] | None = None,
+) -> Image.Image:
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    bounds = bounds_override or polygon.bounds
+    draw_polygon_outline(draw, polygon, bounds, width, height, padding)
+    if footprint_wgs84 is not None:
+        draw_polygon_outline(draw, footprint_wgs84, bounds, width, height, padding)
+    draw_points(draw, points, bounds, width, height, padding, point_radius, coord_fn)
+    return image
 
 
 def write_summary(path_str: str, summary: dict) -> str:
@@ -561,15 +635,22 @@ def compute_point_means_for_scenes(
     preview_path = output_dir / f"sampling_preview_{spacing_m}m.png"
     scene_preview_path = output_dir / f"scene_coverage_preview_{spacing_m}m.png"
     summary_path = output_dir / f"sampling_summary_{spacing_m}m.json"
+    polygon_wgs84 = transform_polygon_to_wgs84(metric_polygon)
 
     write_geojson(str(points_geojson_path), [point_to_feature(point, spacing_m) for point in points])
     write_geojson(
         str(boundary_geojson_path),
-        [polygon_to_feature(metric_polygon, {"area_name": area_name, "prefecture_name": prefecture_name})],
+        [polygon_to_feature(polygon_wgs84, {"area_name": area_name, "prefecture_name": prefecture_name})],
     )
-    write_sampling_preview(str(preview_path), metric_polygon, points)
+    write_sampling_preview(str(preview_path), polygon_wgs84, points, spacing_m)
     if footprint_metric is not None:
-        write_sampling_preview(str(scene_preview_path), metric_polygon, points, footprint_metric)
+        write_sampling_preview(
+            str(scene_preview_path),
+            polygon_wgs84,
+            points,
+            spacing_m,
+            transform_polygon_to_wgs84(footprint_metric),
+        )
 
     valid_points = sum(1 for point in points if point.valid_count > 0)
     area_m2 = compute_polygon_area_m2(metric_polygon)
