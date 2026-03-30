@@ -35,6 +35,7 @@ LST_VIS_MAX_C = 40.0
 LST_VIS_MISSING_COLOR = (185, 185, 185)
 LST_VIS_STATS = ("max", "mean", "min")
 SAMPLING_SURFACE_Z_SCALE = 2.0
+SAMPLING_SPHERE_MARKER_SIZE = 3.5
 LST_VIS_STOPS: list[tuple[float, tuple[int, int, int]]] = [
     (0.0, (49, 54, 149)),
     (0.18, (69, 117, 180)),
@@ -864,7 +865,7 @@ def build_sampling_surface_figure(
         z=temperatures,
         mode="markers",
         marker=dict(
-            size=7,
+            size=SAMPLING_SPHERE_MARKER_SIZE,
             color=temperatures,
             colorscale=_temperature_colorscale(),
             colorbar=dict(title=title),

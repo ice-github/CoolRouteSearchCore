@@ -11,6 +11,7 @@ from analysis.runner import (
     compute_point_means_for_scenes,
     LST_VIS_MAX_C,
     LST_VIS_MIN_C,
+    SAMPLING_SPHERE_MARKER_SIZE,
     SAMPLING_SURFACE_Z_SCALE,
     SamplingPoint,
     build_sampling_surface_figure,
@@ -384,6 +385,7 @@ def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -
     assert list(point_trace.x) == [136.85, 136.86, 136.85, 136.86]
     assert list(point_trace.y) == [35.05, 35.05, 35.06, 35.06]
     assert list(point_trace.z) == [24.0, 28.0, 30.0, 32.0]
+    assert point_trace.marker.size == SAMPLING_SPHERE_MARKER_SIZE
     assert list(point_trace.marker.color) == [24.0, 28.0, 30.0, 32.0]
     assert figure.layout.scene.zaxis.range is None
     assert figure.layout.scene.camera.to_plotly_json() == sampling_surface_default_camera()
