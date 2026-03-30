@@ -79,11 +79,11 @@ def run_analysis(
         area_name,
         start,
         end,
-        dataset_id,
         download_dir,
         workspace_dir,
         spacing_m,
         output_path,
+        dataset_id,
     )
     _log(f"[analyze] wrote {csv_path}")
     return csv_path

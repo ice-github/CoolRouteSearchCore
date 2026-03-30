@@ -28,6 +28,26 @@ def test_get_string_from_date_formats_milliseconds() -> None:
     assert wrapper._get_string_from_date(datetime(2024, 1, 2, 3, 4, 5, 678900)) == "2024-01-02T03:04:05.678Z"
 
 
+def test_fetch_data_raises_clear_error_for_non_json_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    wrapper = CSWWrapper()
+
+    class FakeResponse:
+        status_code = 200
+        text = "<html>bad gateway</html>"
+        headers = {"content-type": "text/html"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            raise ValueError("no json")
+
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match="CSW request did not return JSON"):
+        wrapper._fetch_data("https://example.com")
+
+
 def test_get_filename_from_url_returns_basename(tmp_path: Path) -> None:
     downloader = GcomDownloader(str(tmp_path / "download"), str(tmp_path / "workspace"), "user", "pass")
 

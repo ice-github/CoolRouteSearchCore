@@ -33,7 +33,15 @@ class CSWWrapper:
     def _fetch_data(self, url: str) -> dict:
         response = requests.get(url, timeout=120)
         response.raise_for_status()
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as error:
+            body = response.text.strip()
+            snippet = body[:500]
+            raise RuntimeError(
+                "CSW request did not return JSON "
+                f"(status={response.status_code}, content_type={response.headers.get('content-type', 'unknown')}, url={url!r}, body={snippet!r})"
+            ) from error
 
     def _get_string_from_date(self, utc_date: datetime) -> str:
         return utc_date.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"

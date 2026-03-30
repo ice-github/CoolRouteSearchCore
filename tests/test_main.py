@@ -76,7 +76,7 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
 def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}
 
-    def fake_compute_lst_point_means(area_name, start, end, dataset_id, download_dir, workspace_dir, spacing_m, output_path):
+    def fake_compute_lst_point_means(area_name, start, end, download_dir, workspace_dir, spacing_m, output_path, dataset_id):
         captured["area_name"] = area_name
         captured["start"] = start
         captured["end"] = end
