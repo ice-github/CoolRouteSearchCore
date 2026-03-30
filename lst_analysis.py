@@ -56,6 +56,7 @@ def analysis_output_paths_from_csv_path(csv_path: str | Path) -> dict[str, str]:
     csv_path_obj = Path(csv_path)
     output_dir = csv_path_obj.parent
     stem = csv_path_obj.stem
+    spacing_suffix = stem.rsplit("_", 1)[-1]
     return {
         "csv_path": str(csv_path_obj),
         "points_geojson_path": str(output_dir / f"{stem}_sampling_points.geojson"),
@@ -67,6 +68,14 @@ def analysis_output_paths_from_csv_path(csv_path: str | Path) -> dict[str, str]:
         },
         "surface_paths": {
             stat: str(output_dir / f"{stem}_sampling_surface_{stat}.html")
+            for stat in ("min", "mean", "max")
+        },
+        "topdown_paths": {
+            stat: str(output_dir / f"{stem}_sampling_topdown_{stat}_{spacing_suffix}_topdown.png")
+            for stat in ("min", "mean", "max")
+        },
+        "compare_paths": {
+            stat: str(output_dir / f"{stem}_sampling_compare_{stat}_{spacing_suffix}.png")
             for stat in ("min", "mean", "max")
         },
     }

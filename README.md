@@ -62,6 +62,8 @@ uv run python main.py analyze \
 - `lst_mean_local_<area_name>_<start>_<end>_<spacing>m.csv`
 - `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_preview_{min,mean,max}.png`
 - `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_surface_{min,mean,max}.html`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_topdown_{min,mean,max}_<spacing>m_topdown.png`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_compare_{min,mean,max}_<spacing>m.png`
 - `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_points.geojson`
 - `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_boundary.geojson`
 - `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_summary.json`
@@ -69,7 +71,9 @@ uv run python main.py analyze \
 補足:
 
 - `sampling_preview_*.png` はサンプリング点の 2D 可視化です。
-- `sampling_surface_*.html` は 3D 可視化です。`z = 温度` と `色 = 温度` を併用します。
+- `sampling_surface_*.html` は 3D 可視化です。各サンプリング点を 3D の球状マーカーとして表示し、エリア外形も重ねて表示します。
+- `sampling_topdown_*.png` は 3D 可視化を orthographic の真上視点で描いたものです。
+- `sampling_compare_*.png` は 2D preview と 3D topdown を左右に並べた比較画像です。
 - `dataset-id` は GCOM-C LST 用の固定値 `10002019` を使います。
 - `--download-dir` と `--workspace-dir` は用途ごとに分けられます。
 

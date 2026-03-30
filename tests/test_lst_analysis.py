@@ -2,8 +2,9 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageChops
-from shapely.geometry import Polygon
+import plotly.graph_objects as go
+from PIL import Image, ImageChops, ImageDraw
+from shapely.geometry import MultiPolygon, Polygon
 
 import analysis.runner as runner
 from analysis.runner import (
@@ -20,6 +21,8 @@ from analysis.runner import (
     sample_scene,
     sampling_surface_topdown_camera,
     write_sampling_point_cloud,
+    write_sampling_compare_image,
+    write_sampling_compare_set,
     write_sampling_preview,
     write_sampling_surface,
     write_sampling_preview_set,
@@ -137,6 +140,12 @@ def test_analysis_output_paths_from_csv_path_uses_common_stem() -> None:
     assert paths["surface_paths"]["max"] == (
         "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_surface_max.html"
     )
+    assert paths["topdown_paths"]["mean"] == (
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_topdown_mean_1000m_topdown.png"
+    )
+    assert paths["compare_paths"]["max"] == (
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_compare_max_1000m.png"
+    )
 
 
 def test_load_scene_reads_hdf5_metadata() -> None:
@@ -238,6 +247,7 @@ def test_write_sampling_preview_set_writes_min_mean_max_images(tmp_path: Path) -
 
 
 def test_write_sampling_surface_set_writes_min_mean_max_html(tmp_path: Path) -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
     points = [
         SamplingPoint(
             point_id=1,
@@ -293,7 +303,7 @@ def test_write_sampling_surface_set_writes_min_mean_max_html(tmp_path: Path) -> 
         ),
     ]
 
-    outputs = write_sampling_surface_set(tmp_path, "sampling_surface", points, 1000)
+    outputs = write_sampling_surface_set(tmp_path, "sampling_surface", polygon, points, 1000)
 
     assert set(outputs) == {"min", "mean", "max"}
     for path_str in outputs.values():
@@ -303,6 +313,7 @@ def test_write_sampling_surface_set_writes_min_mean_max_html(tmp_path: Path) -> 
 
 
 def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
     points = [
         SamplingPoint(
             point_id=1,
@@ -358,22 +369,27 @@ def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -
         ),
     ]
 
-    figure = build_sampling_surface_figure(points, "mean")
-    trace = figure.data[0]
+    figure = build_sampling_surface_figure(polygon, points, "mean")
+    boundary_trace, point_trace = figure.data
 
-    assert trace.type == "surface"
-    assert list(trace.x) == [136.85, 136.86]
-    assert list(trace.y) == [35.05, 35.06]
-    assert trace.z == trace.surfacecolor
-    assert trace.cmin is None
-    assert trace.cmax is None
+    assert boundary_trace.type == "scatter3d"
+    assert boundary_trace.mode == "lines"
+    assert point_trace.type == "scatter3d"
+    assert point_trace.mode == "markers"
+    assert list(point_trace.x) == [136.85, 136.86, 136.85, 136.86]
+    assert list(point_trace.y) == [35.05, 35.05, 35.06, 35.06]
+    assert list(point_trace.z) == [24.0, 28.0, 30.0, 32.0]
+    assert list(point_trace.marker.color) == [24.0, 28.0, 30.0, 32.0]
     assert figure.layout.scene.zaxis.range is None
     assert figure.layout.scene.xaxis.title.text == "Longitude"
     assert figure.layout.scene.yaxis.title.text == "Latitude"
-    assert figure.layout.scene.aspectmode == "data"
+    assert figure.layout.scene.aspectmode == "manual"
+    assert figure.layout.scene.aspectratio.x > figure.layout.scene.aspectratio.z
+    assert figure.layout.scene.aspectratio.y > figure.layout.scene.aspectratio.z
 
 
 def test_build_sampling_surface_figure_uses_actual_range_for_high_values() -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
     points = [
         SamplingPoint(
             point_id=1,
@@ -429,16 +445,60 @@ def test_build_sampling_surface_figure_uses_actual_range_for_high_values() -> No
         ),
     ]
 
-    figure = build_sampling_surface_figure(points, "max")
-    trace = figure.data[0]
+    figure = build_sampling_surface_figure(polygon, points, "max")
+    point_trace = figure.data[1]
 
-    assert trace.type == "surface"
-    assert trace.cmin is None
-    assert trace.cmax is None
+    assert point_trace.type == "scatter3d"
+    assert list(point_trace.z) == [180.0, 170.0, 175.0, 182.0]
     assert figure.layout.scene.zaxis.range is None
 
 
-def test_write_sampling_surface_views_renders_multiple_pngs(tmp_path: Path) -> None:
+def test_build_sampling_surface_figure_supports_multipolygon_boundary() -> None:
+    polygon = MultiPolygon(
+        [
+            Polygon([(136.8, 35.0), (136.85, 35.0), (136.85, 35.05), (136.8, 35.05)]),
+            Polygon([(136.86, 35.06), (136.9, 35.06), (136.9, 35.1), (136.86, 35.1)]),
+        ]
+    )
+    points = [
+        SamplingPoint(
+            point_id=1,
+            lon=136.82,
+            lat=35.02,
+            x_metric=1_000.0,
+            y_metric=2_000.0,
+            x_6668=1_000.0,
+            y_6668=2_000.0,
+            sum_lst_c=72.0,
+            min_lst_c=20.0,
+            max_lst_c=28.0,
+            valid_count=3,
+        ),
+        SamplingPoint(
+            point_id=2,
+            lon=136.88,
+            lat=35.08,
+            x_metric=2_000.0,
+            y_metric=3_000.0,
+            x_6668=2_000.0,
+            y_6668=3_000.0,
+            sum_lst_c=96.0,
+            min_lst_c=26.0,
+            max_lst_c=32.0,
+            valid_count=3,
+        ),
+    ]
+
+    figure = build_sampling_surface_figure(polygon, points, "mean")
+
+    assert len(figure.data) == 3
+    assert figure.data[0].mode == "lines"
+    assert figure.data[1].mode == "lines"
+    assert figure.data[2].mode == "markers"
+
+
+def test_write_sampling_surface_views_renders_multiple_pngs(monkeypatch, tmp_path: Path) -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
     points = [
         SamplingPoint(
             point_id=1,
@@ -494,7 +554,20 @@ def test_write_sampling_surface_views_renders_multiple_pngs(tmp_path: Path) -> N
         ),
     ]
 
-    outputs = write_sampling_surface_views(tmp_path, "sampling_surface", points, 1000)
+    def fake_write_image(self, file, format=None, width=None, height=None, scale=None) -> None:
+        camera = self.layout.scene.camera.to_plotly_json()
+        color = (60, 60, 60)
+        if camera == sampling_surface_topdown_camera():
+            color = (47, 128, 237)
+        elif camera.get("eye", {}).get("y") == -2.2:
+            color = (237, 128, 47)
+        elif camera.get("eye", {}).get("x") == 2.2:
+            color = (47, 180, 120)
+        Image.new("RGB", (width * scale, height * scale), color).save(file)
+
+    monkeypatch.setattr(go.Figure, "write_image", fake_write_image)
+
+    outputs = write_sampling_surface_views(tmp_path, "sampling_surface", polygon, points, 1000)
 
     assert set(outputs) == {"topdown", "iso", "low_north", "low_east"}
     rendered = {name: Image.open(path) for name, path in outputs.items()}
@@ -507,6 +580,66 @@ def test_write_sampling_surface_views_renders_multiple_pngs(tmp_path: Path) -> N
     finally:
         for image in rendered.values():
             image.close()
+
+
+def test_write_sampling_compare_image_outputs_side_by_side_panel(tmp_path: Path) -> None:
+    left = Image.new("RGB", (200, 100), (255, 255, 255))
+    right = Image.new("RGB", (200, 100), (255, 255, 255))
+    ImageDraw.Draw(left).ellipse((40, 20, 160, 80), fill=(47, 128, 237))
+    ImageDraw.Draw(right).ellipse((50, 20, 150, 80), fill=(47, 128, 237))
+    left_path = tmp_path / "left.png"
+    right_path = tmp_path / "right.png"
+    output_path = tmp_path / "compare.png"
+    left.save(left_path)
+    right.save(right_path)
+
+    path = write_sampling_compare_image(str(output_path), str(left_path), str(right_path))
+
+    image = Image.open(path)
+    try:
+        assert image.size == (3200, 1270)
+    finally:
+        image.close()
+
+
+def test_write_sampling_compare_set_writes_topdown_and_compare_images(tmp_path: Path) -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
+    points = [
+        SamplingPoint(
+            point_id=1,
+            lon=136.82,
+            lat=35.02,
+            x_metric=1_000.0,
+            y_metric=2_000.0,
+            x_6668=1_000.0,
+            y_6668=2_000.0,
+            sum_lst_c=72.0,
+            min_lst_c=20.0,
+            max_lst_c=28.0,
+            valid_count=3,
+        ),
+        SamplingPoint(
+            point_id=2,
+            lon=136.88,
+            lat=35.08,
+            x_metric=2_000.0,
+            y_metric=3_000.0,
+            x_6668=2_000.0,
+            y_6668=3_000.0,
+            sum_lst_c=96.0,
+            min_lst_c=26.0,
+            max_lst_c=32.0,
+            valid_count=3,
+        ),
+    ]
+
+    write_sampling_preview_set(tmp_path, "sampling", polygon, points, 1000)
+    topdown_paths, compare_paths = write_sampling_compare_set(tmp_path, "sampling", polygon, points, 1000)
+
+    assert set(topdown_paths) == {"min", "mean", "max"}
+    assert set(compare_paths) == {"min", "mean", "max"}
+    assert Path(topdown_paths["mean"]).exists()
+    assert Path(compare_paths["mean"]).exists()
 
 
 def test_sampling_surface_topdown_camera_is_xy_perpendicular() -> None:
@@ -582,7 +715,7 @@ def test_point_cloud_render_matches_2d_preview_before_surface(tmp_path: Path) ->
 
     write_sampling_preview(str(preview_path), polygon, points, 1000)
     write_sampling_point_cloud(str(point_cloud_path), polygon, points, 1000)
-    write_sampling_surface(str(surface_path), points, "mean")
+    write_sampling_surface(str(surface_path), polygon, points, "mean")
 
     preview_image = Image.open(preview_path)
     point_cloud_image = Image.open(point_cloud_path)
@@ -731,6 +864,11 @@ def test_compute_point_means_for_scenes_emits_scene_progress_logs(monkeypatch, t
     monkeypatch.setattr(runner, "write_geojson", lambda *args, **kwargs: None)
     monkeypatch.setattr(runner, "write_sampling_preview", lambda *args, **kwargs: None)
     monkeypatch.setattr(runner, "write_sampling_surface", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "write_sampling_compare_set",
+        lambda *args, **kwargs: ({"mean": "topdown.png"}, {"mean": "compare.png"}),
+    )
     monkeypatch.setattr(runner, "write_summary", lambda *args, **kwargs: None)
 
     summary = compute_point_means_for_scenes(

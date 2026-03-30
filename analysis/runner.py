@@ -12,7 +12,7 @@ import requests
 import shapefile
 import plotly.graph_objects as go
 from bs4 import BeautifulSoup, element
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 from pyproj import Transformer
 from rasterio.errors import NotGeoreferencedWarning
 from rasterio.transform import from_bounds, rowcol
@@ -530,27 +530,36 @@ def draw_point_spheres(
     height: int,
     padding: int,
     radius: int,
+    value_fn: Callable[[SamplingPoint], float | None] | None = None,
 ) -> None:
     outer_radius = max(1, radius + 1)
     inner_radius = max(1, radius - 1)
     highlight_radius = max(1, radius // 2)
     for point in points:
         px, py = scale_xy(point.lon, point.lat, bounds, width, height, padding)
+        if value_fn is None:
+            middle_color = (47, 128, 237)
+        else:
+            value_c = value_fn(point)
+            middle_color = LST_VIS_MISSING_COLOR if value_c is None else temperature_to_color(value_c)
+        outer_color = tuple(max(0, int(channel * 0.7)) for channel in middle_color)
+        inner_color = tuple(min(255, int(channel + (255 - channel) * 0.35)) for channel in middle_color)
+        highlight_color = tuple(min(255, int(channel + (255 - channel) * 0.7)) for channel in middle_color)
         draw.ellipse(
             (px - outer_radius, py - outer_radius, px + outer_radius, py + outer_radius),
-            fill=(33, 92, 178),
+            fill=outer_color,
         )
         draw.ellipse(
             (px - radius, py - radius, px + radius, py + radius),
-            fill=(47, 128, 237),
+            fill=middle_color,
         )
         draw.ellipse(
             (px - inner_radius, py - inner_radius, px + inner_radius, py + inner_radius),
-            fill=(125, 179, 255),
+            fill=inner_color,
         )
         draw.ellipse(
             (px - highlight_radius, py - highlight_radius, px + highlight_radius, py + highlight_radius),
-            fill=(208, 231, 255),
+            fill=highlight_color,
         )
 
 
@@ -642,6 +651,7 @@ def write_sampling_point_cloud(
     polygon_wgs84: Polygon,
     points: list[SamplingPoint],
     spacing_m: int,
+    value_fn: Callable[[SamplingPoint], float | None] | None = None,
 ) -> str:
     path = ensure_parent(path_str)
     point_radius = preview_point_radius(spacing_m)
@@ -650,7 +660,7 @@ def write_sampling_point_cloud(
     image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image)
     draw_polygon_outline(draw, polygon_wgs84, polygon_wgs84.bounds, width, height, padding)
-    draw_point_spheres(draw, points, polygon_wgs84.bounds, width, height, padding, point_radius)
+    draw_point_spheres(draw, points, polygon_wgs84.bounds, width, height, padding, point_radius, value_fn=value_fn)
     if spacing_m <= 1000:
         trim_margin = 12
         background = Image.new("RGB", image.size, (255, 255, 255))
@@ -734,37 +744,80 @@ def _grid_key(value: float) -> float:
     return round(value, 6)
 
 
+def _polygon_outline_traces(polygon_wgs84: Polygon, z_value: float) -> list[go.Scatter3d]:
+    polygons = list(polygon_wgs84.geoms) if hasattr(polygon_wgs84, "geoms") else [polygon_wgs84]
+    traces: list[go.Scatter3d] = []
+    for polygon in polygons:
+        coords = list(polygon.exterior.coords)
+        traces.append(
+            go.Scatter3d(
+                x=[coord[0] for coord in coords],
+                y=[coord[1] for coord in coords],
+                z=[z_value] * len(coords),
+                mode="lines",
+                line=dict(color="rgb(60, 60, 60)", width=6),
+                hoverinfo="skip",
+                name="Boundary",
+            )
+        )
+    return traces
+
+
+def _sampling_scene_aspectratio(
+    lons: list[float],
+    lats: list[float],
+    temperatures: list[float],
+) -> dict[str, float]:
+    lon_span = max(max(lons) - min(lons), 1e-9)
+    lat_span = max(max(lats) - min(lats), 1e-9)
+    mean_lat = sum(lats) / len(lats)
+    x_span_km = lon_span * 111.32 * max(math.cos(math.radians(mean_lat)), 1e-6)
+    y_span_km = lat_span * 111.32
+    horizontal_base = max(x_span_km, y_span_km, 1e-6)
+    z_span_c = max(max(temperatures) - min(temperatures), 1.0)
+    z_ratio = max(0.18, min(0.42, z_span_c / (horizontal_base * 25.0)))
+    return {
+        "x": max(x_span_km / horizontal_base, 0.3) * 2.4,
+        "y": max(y_span_km / horizontal_base, 0.3) * 2.4,
+        "z": z_ratio,
+    }
+
+
 def build_sampling_surface_figure(
+    polygon_wgs84: Polygon,
     points: list[SamplingPoint],
     stat: str,
 ) -> go.Figure:
-    x_values = sorted({_grid_key(point.lon) for point in points})
-    y_values = sorted({_grid_key(point.lat) for point in points})
-    x_index = {value: index for index, value in enumerate(x_values)}
-    y_index = {value: index for index, value in enumerate(y_values)}
-
-    z_values: list[list[float]] = [[math.nan for _ in x_values] for _ in y_values]
-    for point in points:
-        value_c = sampling_stat_value(point, stat)
-        if value_c is None:
-            continue
-        x_key = _grid_key(point.lon)
-        y_key = _grid_key(point.lat)
-        z_values[y_index[y_key]][x_index[x_key]] = value_c
-
     title = sampling_stat_label(stat)
-    surface = go.Surface(
-        x=x_values,
-        y=y_values,
-        z=z_values,
-        surfacecolor=z_values,
-        colorscale=_temperature_colorscale(),
-        colorbar=dict(title=title),
-        connectgaps=False,
+    valid_points = [point for point in points if sampling_stat_value(point, stat) is not None]
+    temperatures = [sampling_stat_value(point, stat) for point in valid_points]
+    lons = [point.lon for point in valid_points]
+    lats = [point.lat for point in valid_points]
+    aspectratio = _sampling_scene_aspectratio(lons, lats, temperatures)
+
+    z_min = min(temperatures)
+    z_max = max(temperatures)
+    z_range = max(z_max - z_min, 1.0)
+    outline_z = z_min - z_range * 0.08
+
+    spheres = go.Scatter3d(
+        x=lons,
+        y=lats,
+        z=temperatures,
+        mode="markers",
+        marker=dict(
+            size=7,
+            color=temperatures,
+            colorscale=_temperature_colorscale(),
+            colorbar=dict(title=title),
+            opacity=0.95,
+            line=dict(color="rgb(255, 255, 255)", width=1),
+        ),
         hovertemplate="lon=%{x:.6f}<br>lat=%{y:.6f}<br>temperature=%{z:.2f} °C<extra></extra>",
+        name="Samples",
     )
 
-    figure = go.Figure(data=[surface])
+    figure = go.Figure(data=[*_polygon_outline_traces(polygon_wgs84, outline_z), spheres])
     figure.update_layout(
         title=title,
         template="plotly_white",
@@ -773,14 +826,20 @@ def build_sampling_surface_figure(
             xaxis_title="Longitude",
             yaxis_title="Latitude",
             zaxis_title="LST (°C)",
-            aspectmode="data",
+            aspectmode="manual",
+            aspectratio=aspectratio,
         ),
+        showlegend=False,
     )
     return figure
 
 
 def sampling_surface_view_path(prefix: str, spacing_m: int, stat: str, view_name: str) -> str:
     return f"{prefix}_{stat}_{spacing_m}m_{view_name}.png"
+
+
+def sampling_compare_path(prefix: str, spacing_m: int, stat: str) -> str:
+    return f"{prefix}_{stat}_{spacing_m}m.png"
 
 
 def sampling_surface_topdown_camera() -> dict:
@@ -811,6 +870,7 @@ def sampling_surface_camera_presets() -> dict[str, dict]:
 
 def write_sampling_surface(
     path_str: str,
+    polygon_wgs84: Polygon,
     points: list[SamplingPoint],
     stat: str,
 ) -> str:
@@ -823,7 +883,7 @@ def write_sampling_surface(
         )
         return str(path)
 
-    figure = build_sampling_surface_figure(points, stat)
+    figure = build_sampling_surface_figure(polygon_wgs84, points, stat)
     figure.write_html(str(path), include_plotlyjs=True, full_html=True)
     return str(path)
 
@@ -831,12 +891,13 @@ def write_sampling_surface(
 def write_sampling_surface_views(
     output_dir: Path,
     prefix: str,
+    polygon_wgs84: Polygon,
     points: list[SamplingPoint],
     spacing_m: int,
     stat: str = "mean",
     camera_presets: dict[str, dict] | None = None,
 ) -> dict[str, str]:
-    figure = build_sampling_surface_figure(points, stat)
+    figure = build_sampling_surface_figure(polygon_wgs84, points, stat)
     output_paths: dict[str, str] = {}
     presets = camera_presets or sampling_surface_camera_presets()
     for view_name, camera in presets.items():
@@ -848,9 +909,55 @@ def write_sampling_surface_views(
     return output_paths
 
 
+def _trim_white_image(image: Image.Image, margin: int = 12) -> Image.Image:
+    background = Image.new("RGB", image.size, (255, 255, 255))
+    bbox = ImageChops.difference(image.convert("RGB"), background).getbbox()
+    if bbox is None:
+        return image.copy()
+    left = max(0, bbox[0] - margin)
+    upper = max(0, bbox[1] - margin)
+    right = min(image.size[0], bbox[2] + margin)
+    lower = min(image.size[1], bbox[3] + margin)
+    return image.crop((left, upper, right, lower))
+
+
+def write_sampling_compare_image(
+    path_str: str,
+    preview_path: str,
+    topdown_path: str,
+) -> str:
+    path = ensure_parent(path_str)
+    preview = Image.open(preview_path).convert("RGB")
+    topdown = Image.open(topdown_path).convert("RGB")
+    try:
+        preview_trim = _trim_white_image(preview)
+        topdown_trim = _trim_white_image(topdown)
+        panel_size = (1600, 1200)
+        preview_panel = ImageOps.contain(preview_trim, panel_size, method=Image.Resampling.LANCZOS)
+        topdown_panel = ImageOps.contain(topdown_trim, panel_size, method=Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (panel_size[0] * 2, panel_size[1] + 70), (255, 255, 255))
+        draw = ImageDraw.Draw(canvas)
+        draw.text((20, 20), "2D sampling preview", fill=(0, 0, 0))
+        draw.text((panel_size[0] + 20, 20), "3D sampling topdown (orthographic)", fill=(0, 0, 0))
+        canvas.paste(preview_panel, ((panel_size[0] - preview_panel.width) // 2, 70 + (panel_size[1] - preview_panel.height) // 2))
+        canvas.paste(
+            topdown_panel,
+            (
+                panel_size[0] + (panel_size[0] - topdown_panel.width) // 2,
+                70 + (panel_size[1] - topdown_panel.height) // 2,
+            ),
+        )
+        canvas.save(path)
+    finally:
+        preview.close()
+        topdown.close()
+    return str(path)
+
+
 def write_sampling_surface_set(
     output_dir: Path,
     prefix: str,
+    polygon_wgs84: Polygon,
     points: list[SamplingPoint],
     spacing_m: int,
     stats: tuple[str, ...] = LST_VIS_STATS,
@@ -858,8 +965,37 @@ def write_sampling_surface_set(
     output_paths: dict[str, str] = {}
     for stat in stats:
         path = output_dir / sampling_surface_path(prefix, spacing_m, stat)
-        output_paths[stat] = write_sampling_surface(str(path), points, stat)
+        output_paths[stat] = write_sampling_surface(str(path), polygon_wgs84, points, stat)
     return output_paths
+
+
+def write_sampling_compare_set(
+    output_dir: Path,
+    prefix: str,
+    polygon_wgs84: Polygon,
+    points: list[SamplingPoint],
+    spacing_m: int,
+    stats: tuple[str, ...] = LST_VIS_STATS,
+) -> tuple[dict[str, str], dict[str, str]]:
+    topdown_paths: dict[str, str] = {}
+    compare_paths: dict[str, str] = {}
+    for stat in stats:
+        preview_path = output_dir / f"{prefix}_sampling_preview_{stat}.png"
+        if not preview_path.exists():
+            preview_path = output_dir / sampling_preview_path(prefix, spacing_m, stat)
+        topdown_path = output_dir / sampling_surface_view_path(f"{prefix}_sampling_topdown", spacing_m, stat, "topdown")
+        write_sampling_point_cloud(
+            str(topdown_path),
+            polygon_wgs84,
+            points,
+            spacing_m,
+            value_fn=lambda point, stat=stat: sampling_stat_value(point, stat),
+        )
+        compare_path = output_dir / sampling_compare_path(f"{prefix}_sampling_compare", spacing_m, stat)
+        write_sampling_compare_image(str(compare_path), str(preview_path), topdown_path)
+        topdown_paths[stat] = str(topdown_path)
+        compare_paths[stat] = str(compare_path)
+    return topdown_paths, compare_paths
 
 
 def write_sampling_preview_set(
@@ -1076,9 +1212,10 @@ def compute_point_means_for_scenes(
             value_fn=lambda point, stat=stat: sampling_stat_value(point, stat),
             legend_title=sampling_stat_label(stat),
         )
-        write_sampling_surface(str(surface_path), points, stat)
+        write_sampling_surface(str(surface_path), polygon_wgs84, points, stat)
         preview_paths[stat] = str(preview_path)
         surface_paths[stat] = str(surface_path)
+    topdown_paths, compare_paths = write_sampling_compare_set(output_dir, output_stem, polygon_wgs84, points, spacing_m)
 
     valid_points = sum(1 for point in points if point.valid_count > 0)
     area_m2 = compute_polygon_area_m2(metric_polygon)
@@ -1096,6 +1233,10 @@ def compute_point_means_for_scenes(
         "preview_paths": preview_paths,
         "surface_path": surface_paths["mean"],
         "surface_paths": surface_paths,
+        "topdown_path": topdown_paths["mean"],
+        "topdown_paths": topdown_paths,
+        "compare_path": compare_paths["mean"],
+        "compare_paths": compare_paths,
         "csv_path": str(output_path_obj),
         "approx_unique_pixels_per_scene": estimate_unique_pixels(area_m2, spacing_m),
         "lst_visualization_min_c": LST_VIS_MIN_C,
