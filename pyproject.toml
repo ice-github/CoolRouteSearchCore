@@ -1,0 +1,14 @@
+[project]
+name = "coolroutesearchcore"
+version = "0.1.0"
+description = "Download JAXA G-Portal GCOM-C data from Python with Docker and Playwright."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "pyshp>=2.3.1",
+    "requests>=2.32.0",
+]
+
+[tool.uv]
+package = false
