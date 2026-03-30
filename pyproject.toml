@@ -3,10 +3,14 @@ name = "coolroutesearchcore"
 version = "0.1.0"
 description = "Download JAXA G-Portal GCOM-C data from Python with Docker and Playwright."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.12.0",
+    "pillow>=12.1.0",
+    "pyproj>=3.7.0",
     "pyshp>=2.3.1",
+    "rasterio>=1.5.0",
+    "shapely>=2.1.0",
     "requests>=2.32.0",
 ]
 
@@ -20,3 +24,6 @@ package = false
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+filterwarnings = [
+    "ignore:Dataset has no geotransform, gcps, or rpcs.*:rasterio.errors.NotGeoreferencedWarning",
+]

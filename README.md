@@ -1,6 +1,6 @@
 # CoolRouteSearchCore
 
-JAXA G-Portal の GCOM-C HDF5 を Docker 上の Playwright で取得する最小構成です。
+JAXA G-Portal の GCOM-C HDF5 を Playwright で取得し、`uv` 上で LST を解析する最小構成です。
 
 ## 必要な環境変数
 
@@ -30,6 +30,21 @@ uv run python main.py
 
 `main.py` はリポジトリ同梱の都道府県 `bbox` データから愛知県の範囲を使い、CSW で対象 HDF5 の URL を取得して、未取得ファイルのみを Docker 上の Playwright でダウンロードします。
 
+## 名古屋市 LST 解析
+
+名古屋市の 2025 年 7 月〜8 月 LST をサンプル点ごとに平均化するための入口として [`lst_analysis.py`](/home/ubuntu/workspace/CoolRouteSearchCore/.worktrees/nagoya-lst-analysis/lst_analysis.py) を追加しています。
+
+- `estimate_sampling_load(area_name, start, end, [1000, 100, 10])`
+- `generate_sampling_points(area_name, spacing_m, output_dir)`
+- `compute_lst_point_means(area_name, start, end, spacing_m, output_path)`
+
+解析は `uv` で直接動きます。
+
+- 取得済み HDF5 は既存の `download/` を再利用します。
+- 最新の行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
+- HDF5 は `Image_data/LST` と `Image_data/QA_flag` を `rasterio` で直接開き、GCOM-C の等面積投影上でサンプル点評価します。
+- 可視化成果物として `sampling_preview_*.png`、`scene_coverage_preview_*.png`、`sampling_points_*.geojson` を出力します。
+
 ## TAKT
 
 このリポジトリでは `takt` を project-level の `.takt/` だけで運用します。`~/.takt` は使いません。
@@ -44,13 +59,13 @@ npm run takt:list
 
 標準フローは対話でタスクを整理してキューし、その後 `npm run takt:run` で worktree 実行する形です。`Execute now` は現在の working tree を直接変更するため、通常運用では使いません。
 
-`.takt/config.yaml` では provider を `codex` に固定し、quality gate はこの Python プロジェクト向けに `uv sync --group dev`、`uv run pytest`、`uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py scripts playwright` を使うようにしています。
+`.takt/config.yaml` では provider を `codex` に固定し、quality gate はこの Python プロジェクト向けに `uv sync --group dev`、`uv run pytest`、`uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py lst_analysis.py analysis scripts playwright` を使うようにしています。
 
 ## テスト
 
 ```bash
 uv run pytest
-uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py scripts playwright
+uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py lst_analysis.py analysis scripts playwright
 ```
 
 ## GitHub Actions

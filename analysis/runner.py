@@ -1,0 +1,593 @@
+import json
+import math
+import os
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urljoin
+
+import rasterio
+import requests
+import shapefile
+from bs4 import BeautifulSoup, element
+from PIL import Image, ImageDraw
+from pyproj import Transformer
+from rasterio.errors import NotGeoreferencedWarning
+from rasterio.transform import from_bounds, rowcol
+from shapely.geometry import Point, Polygon, mapping, shape
+from shapely.ops import transform, unary_union
+from shapely.prepared import prep
+import warnings
+
+
+warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
+
+METRIC_CRS = "ESRI:53008"
+WGS84_CRS = "EPSG:4326"
+JGD2011_CRS = "EPSG:6668"
+GCOM_PIXEL_SIZE_M = 3000
+STRICT_INVALID_QA_BITS = (0, 1, 5, 11, 12, 13)
+
+_WGS84_TO_METRIC = Transformer.from_crs(WGS84_CRS, METRIC_CRS, always_xy=True)
+_METRIC_TO_WGS84 = Transformer.from_crs(METRIC_CRS, WGS84_CRS, always_xy=True)
+_WGS84_TO_6668 = Transformer.from_crs(WGS84_CRS, JGD2011_CRS, always_xy=True)
+
+
+@dataclass
+class ZipFileInfo:
+    prefecture_name: str
+    year: int
+    url: str
+    size_str: str
+    filename: str
+
+
+@dataclass
+class SamplingPoint:
+    point_id: int
+    lon: float
+    lat: float
+    x_metric: float
+    y_metric: float
+    x_6668: float
+    y_6668: float
+    inside_city: bool = True
+    sum_lst_c: float = 0.0
+    valid_count: int = 0
+
+
+@dataclass
+class SceneRaster:
+    array: object
+    transform: object
+    tags: dict[str, str]
+    band_tags: dict[str, str]
+    width: int
+    height: int
+    footprint_metric: Polygon
+
+
+def ensure_parent(path_str: str) -> Path:
+    path = Path(path_str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def parse_float_tag(tags: dict[str, str], key: str, default: float = 0.0) -> float:
+    value = tags.get(key)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def parse_int_tag(tags: dict[str, str], key: str, default: int = 0) -> int:
+    value = tags.get(key)
+    if value is None:
+        return default
+    try:
+        return int(float(value))
+    except ValueError:
+        return default
+
+
+def project_wgs84_to_metric(lon: float, lat: float) -> tuple[float, float]:
+    return _WGS84_TO_METRIC.transform(lon, lat)
+
+
+def project_metric_to_wgs84(x: float, y: float) -> tuple[float, float]:
+    return _METRIC_TO_WGS84.transform(x, y)
+
+
+def project_wgs84_to_6668(lon: float, lat: float) -> tuple[float, float]:
+    return _WGS84_TO_6668.transform(lon, lat)
+
+
+def tag_corner_points(tags: dict[str, str]) -> list[tuple[float, float]]:
+    return [
+        (
+            parse_float_tag(tags, "Geometry_data_Upper_left_longitude"),
+            parse_float_tag(tags, "Geometry_data_Upper_left_latitude"),
+        ),
+        (
+            parse_float_tag(tags, "Geometry_data_Upper_right_longitude"),
+            parse_float_tag(tags, "Geometry_data_Upper_right_latitude"),
+        ),
+        (
+            parse_float_tag(tags, "Geometry_data_Lower_right_longitude"),
+            parse_float_tag(tags, "Geometry_data_Lower_right_latitude"),
+        ),
+        (
+            parse_float_tag(tags, "Geometry_data_Lower_left_longitude"),
+            parse_float_tag(tags, "Geometry_data_Lower_left_latitude"),
+        ),
+    ]
+
+
+def project_polygon_to_metric(polygon: Polygon) -> Polygon:
+    return transform(_WGS84_TO_METRIC.transform, polygon)
+
+
+def build_metric_footprint_polygon(tags: dict[str, str]) -> Polygon:
+    corners = tag_corner_points(tags)
+    return project_polygon_to_metric(Polygon(corners))
+
+
+def compute_projected_bounds(tags: dict[str, str]) -> tuple[float, float, float, float]:
+    polygon = build_metric_footprint_polygon(tags)
+    min_x, min_y, max_x, max_y = polygon.bounds
+    return min_x, min_y, max_x, max_y
+
+
+def open_hdf5_subdataset(hdf5_path: str, sub_key: str) -> rasterio.io.DatasetReader:
+    return rasterio.open(f"HDF5:{hdf5_path}://{sub_key}")
+
+
+def load_scene(hdf5_path: str, sub_key: str) -> SceneRaster:
+    with open_hdf5_subdataset(hdf5_path, sub_key) as dataset:
+        array = dataset.read(1)
+        tags = {key: str(value) for key, value in dataset.tags().items()}
+        band_tags = {key: str(value) for key, value in dataset.tags(1).items()}
+        width = dataset.width
+        height = dataset.height
+
+    min_x, min_y, max_x, max_y = compute_projected_bounds(tags)
+    transform_obj = from_bounds(min_x, min_y, max_x, max_y, width, height)
+    footprint_metric = build_metric_footprint_polygon(tags)
+    return SceneRaster(
+        array=array,
+        transform=transform_obj,
+        tags=tags,
+        band_tags=band_tags,
+        width=width,
+        height=height,
+        footprint_metric=footprint_metric,
+    )
+
+
+def scene_nodata(scene: SceneRaster) -> int:
+    return parse_int_tag(scene.band_tags, "Error_DN", 65535)
+
+
+def scene_slope(scene: SceneRaster) -> float:
+    return parse_float_tag(scene.band_tags, "Slope", 1.0)
+
+
+def scene_offset(scene: SceneRaster) -> float:
+    return parse_float_tag(scene.band_tags, "Offset", 0.0)
+
+
+def sample_scene(scene: SceneRaster, lon: float, lat: float) -> tuple[int, int, int] | None:
+    x_metric, y_metric = project_wgs84_to_metric(lon, lat)
+    row, col = rowcol(scene.transform, x_metric, y_metric)
+    if row < 0 or col < 0 or row >= scene.height or col >= scene.width:
+        return None
+
+    value = int(scene.array[row, col])
+    if value == scene_nodata(scene):
+        return None
+
+    return value, row, col
+
+
+def lst_dn_to_celsius(value: int | float, scene: SceneRaster) -> float:
+    return float(value) * scene_slope(scene) + scene_offset(scene) - 273
+
+
+def decode_qa_flag(value: int) -> dict[int, int]:
+    masked = int(value) & 0xFFFF
+    return {bit: (masked >> bit) & 1 for bit in range(16)}
+
+
+def is_valid_qa_value(value: int) -> bool:
+    bits = decode_qa_flag(value)
+    return all(bits[index] == 0 for index in STRICT_INVALID_QA_BITS)
+
+
+def parse_download_url(onclick: str) -> str:
+    start = onclick.find("DownLd(")
+    end = onclick.find(");", start)
+    if start == -1 or end == -1:
+        raise RuntimeError("failed to parse MLIT download url")
+    values = [value.strip().strip("'") for value in onclick[start + len("DownLd(") : end].split(",")]
+    if len(values) < 3:
+        raise RuntimeError("unexpected MLIT download onclick payload")
+    return values[2]
+
+
+def parse_latest_prefecture_zip_files() -> dict[str, ZipFileInfo]:
+    url = "https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N03-2025.html"
+    response = requests.get(url, timeout=120)
+    response.raise_for_status()
+    response.encoding = response.apparent_encoding
+    soup = BeautifulSoup(response.text, "html.parser")
+    main = soup.find("main")
+    if main is None:
+        raise RuntimeError("failed to parse MLIT latest administrative division page")
+    jmap = main.find(id="Jmap")
+    if jmap is None:
+        raise RuntimeError("failed to find MLIT prefecture table")
+    table = jmap.find_next_sibling("table", class_="responsive-table")
+    if table is None:
+        raise RuntimeError("failed to find MLIT download table")
+
+    zip_files: dict[str, ZipFileInfo] = {}
+    for row in table.find_all("tr")[1:]:
+        cells: list[element.Tag] = row.find_all("td")
+        if len(cells) < 6:
+            continue
+        prefecture_name = cells[0].get_text(strip=True)
+        year_text = cells[2].get_text(strip=True)
+        filename = cells[4].get_text(strip=True)
+        download_link = cells[5].find("a")
+        if not prefecture_name or prefecture_name == "全国":
+            continue
+        if download_link is None or not download_link.has_attr("onclick"):
+            continue
+        digits = "".join(ch for ch in year_text if ch.isdigit())
+        year = int(digits[:4]) if len(digits) >= 4 else 0
+        current = zip_files.get(prefecture_name)
+        if current and current.year >= year:
+            continue
+        zip_files[prefecture_name] = ZipFileInfo(
+            prefecture_name=prefecture_name,
+            year=year,
+            url=urljoin(url, parse_download_url(download_link["onclick"])),
+            size_str=cells[3].get_text(strip=True),
+            filename=filename,
+        )
+    return zip_files
+
+
+def download_and_extract_prefecture(prefecture_name: str, download_dir: Path, workspace_dir: Path) -> Path:
+    zip_files = parse_latest_prefecture_zip_files()
+    normalized_name = prefecture_name.removesuffix("都").removesuffix("道").removesuffix("府").removesuffix("県")
+    zip_info = zip_files.get(prefecture_name) or zip_files.get(normalized_name)
+    if zip_info is None:
+        raise ValueError(f"prefecture not found in latest administrative data: {prefecture_name}")
+
+    zip_path = download_dir / zip_info.filename
+    extract_dir = workspace_dir / Path(zip_info.filename).stem
+
+    if not zip_path.exists():
+        response = requests.get(zip_info.url, timeout=300)
+        response.raise_for_status()
+        zip_path.write_bytes(response.content)
+
+    if not extract_dir.exists():
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as zip_handle:
+            zip_handle.extractall(extract_dir)
+
+    for root, _, files in os.walk(extract_dir):
+        for filename in files:
+            if filename.endswith(".shp"):
+                return Path(root) / filename
+    raise FileNotFoundError(f"shapefile not found under: {extract_dir}")
+
+
+def _record_area_keys(record: dict[str, str]) -> list[str]:
+    prefecture = record.get("N03_001", "").strip()
+    municipality = (record.get("N03_003", "").strip() or record.get("N03_004", "").strip())
+    district = (record.get("N03_004", "").strip() if record.get("N03_003", "").strip() else record.get("N03_005", "").strip())
+    keys = []
+    if prefecture and municipality:
+        keys.append(f"{prefecture}{municipality}")
+    if prefecture and municipality and district:
+        keys.append(f"{prefecture}{municipality}{district}")
+    return keys
+
+
+def load_area_polygon(area_name: str, prefecture_name: str, download_dir: Path, workspace_dir: Path) -> tuple[Polygon, Path]:
+    shp_path = download_and_extract_prefecture(prefecture_name, download_dir, workspace_dir)
+    polygons: list[Polygon] = []
+    last_error: Exception | None = None
+
+    for encoding in ("utf-8", "cp932", "shift_jis", "latin1"):
+        try:
+            with shapefile.Reader(str(shp_path), encoding=encoding) as reader:
+                polygons = []
+                for shape_record in reader.iterShapeRecords():
+                    record = shape_record.record.as_dict()
+                    if area_name not in _record_area_keys(record):
+                        continue
+                    polygons.append(shape(shape_record.shape.__geo_interface__))
+            if polygons:
+                break
+        except UnicodeDecodeError as error:
+            last_error = error
+            polygons = []
+
+    if not polygons:
+        if last_error is not None:
+            raise RuntimeError(f"failed to decode shapefile records for {shp_path}") from last_error
+        raise ValueError(f"area polygon not found: {area_name}")
+
+    return unary_union(polygons), shp_path
+
+
+def transform_polygon_to_metric(polygon: Polygon) -> Polygon:
+    return transform(_WGS84_TO_METRIC.transform, polygon)
+
+
+def transform_metric_to_wgs84(x: float, y: float) -> tuple[float, float]:
+    return _METRIC_TO_WGS84.transform(x, y)
+
+
+def transform_polygon_to_6668(polygon: Polygon) -> Polygon:
+    return transform(_WGS84_TO_6668.transform, polygon)
+
+
+def generate_grid_points(metric_polygon: Polygon, spacing_m: int) -> list[SamplingPoint]:
+    if spacing_m <= 0:
+        raise ValueError("spacing_m must be positive")
+
+    min_x, min_y, max_x, max_y = metric_polygon.bounds
+    prepared = prep(metric_polygon)
+    start_x = math.floor(min_x / spacing_m) * spacing_m + spacing_m / 2
+    start_y = math.floor(min_y / spacing_m) * spacing_m + spacing_m / 2
+
+    points: list[SamplingPoint] = []
+    point_id = 1
+    y = start_y
+    while y <= max_y:
+        x = start_x
+        while x <= max_x:
+            point = Point(x, y)
+            if prepared.covers(point):
+                lon, lat = transform_metric_to_wgs84(x, y)
+                x_6668, y_6668 = project_wgs84_to_6668(lon, lat)
+                points.append(
+                    SamplingPoint(
+                        point_id=point_id,
+                        lon=lon,
+                        lat=lat,
+                        x_metric=x,
+                        y_metric=y,
+                        x_6668=x_6668,
+                        y_6668=y_6668,
+                    )
+                )
+                point_id += 1
+            x += spacing_m
+        y += spacing_m
+    return points
+
+
+def write_geojson(path_str: str, features: list[dict]) -> str:
+    path = ensure_parent(path_str)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump({"type": "FeatureCollection", "features": features}, handle, ensure_ascii=False)
+    return str(path)
+
+
+def point_to_feature(point: SamplingPoint, spacing_m: int) -> dict:
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [point.lon, point.lat]},
+        "properties": {
+            "point_id": point.point_id,
+            "inside_city": point.inside_city,
+            "spacing_m": spacing_m,
+            "x_6668": point.x_6668,
+            "y_6668": point.y_6668,
+            "x_metric_m": point.x_metric,
+            "y_metric_m": point.y_metric,
+        },
+    }
+
+
+def polygon_to_feature(geometry: Polygon, properties: dict) -> dict:
+    return {
+        "type": "Feature",
+        "geometry": mapping(geometry),
+        "properties": properties,
+    }
+
+
+def scale_xy(x: float, y: float, bounds: tuple[float, float, float, float], width: int, height: int, padding: int) -> tuple[int, int]:
+    min_x, min_y, max_x, max_y = bounds
+    usable_width = width - padding * 2
+    usable_height = height - padding * 2
+    scale_x = usable_width / max(max_x - min_x, 1)
+    scale_y = usable_height / max(max_y - min_y, 1)
+    scale = min(scale_x, scale_y)
+    px = padding + (x - min_x) * scale
+    py = height - (padding + (y - min_y) * scale)
+    return int(px), int(py)
+
+
+def draw_polygon_outline(draw: ImageDraw.ImageDraw, polygon: Polygon, bounds: tuple[float, float, float, float], width: int, height: int, padding: int) -> None:
+    polygons = [polygon] if polygon.geom_type == "Polygon" else list(polygon.geoms)
+    for single_polygon in polygons:
+        exterior = [scale_xy(x, y, bounds, width, height, padding) for x, y in single_polygon.exterior.coords]
+        draw.polygon(exterior, fill=(236, 242, 248), outline=(60, 80, 100))
+        for interior in single_polygon.interiors:
+            ring = [scale_xy(x, y, bounds, width, height, padding) for x, y in interior.coords]
+            draw.polygon(ring, fill=(255, 255, 255), outline=(60, 80, 100))
+
+
+def draw_points(
+    draw: ImageDraw.ImageDraw,
+    points: list[SamplingPoint],
+    bounds: tuple[float, float, float, float],
+    width: int,
+    height: int,
+    padding: int,
+) -> None:
+    radius = 3
+    for point in points:
+        px, py = scale_xy(point.x_metric, point.y_metric, bounds, width, height, padding)
+        color = (204, 38, 41) if point.valid_count == 0 else (47, 128, 237)
+        draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=color)
+
+
+def write_sampling_preview(
+    path_str: str,
+    metric_polygon: Polygon,
+    points: list[SamplingPoint],
+    footprint_metric: Polygon | None = None,
+) -> str:
+    path = ensure_parent(path_str)
+    width = 1200
+    height = 1200
+    padding = 48
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    bounds = metric_polygon.bounds
+    draw_polygon_outline(draw, metric_polygon, bounds, width, height, padding)
+    if footprint_metric is not None:
+        draw_polygon_outline(draw, footprint_metric, bounds, width, height, padding)
+    draw_points(draw, points, bounds, width, height, padding)
+    image.save(path)
+    return str(path)
+
+
+def write_summary(path_str: str, summary: dict) -> str:
+    path = ensure_parent(path_str)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, ensure_ascii=False, indent=2)
+    return str(path)
+
+
+def estimate_unique_pixels(area_m2: float, spacing_m: int) -> int:
+    effective_resolution = max(spacing_m, GCOM_PIXEL_SIZE_M)
+    return max(1, math.ceil(area_m2 / (effective_resolution * effective_resolution)))
+
+
+def compute_polygon_area_m2(metric_polygon: Polygon) -> float:
+    return float(metric_polygon.area)
+
+
+def estimate_sampling_load_for_polygon(
+    area_name: str,
+    prefecture_name: str,
+    metric_polygon: Polygon,
+    scene_count: int,
+    spacings_m: list[int],
+) -> dict:
+    area_m2 = compute_polygon_area_m2(metric_polygon)
+    estimates = []
+    for spacing_m in spacings_m:
+        points = generate_grid_points(metric_polygon, int(spacing_m))
+        estimates.append(
+            {
+                "spacing_m": int(spacing_m),
+                "candidate_point_count": len(points),
+                "scene_count": int(scene_count),
+                "estimated_total_samples": len(points) * int(scene_count),
+                "approx_unique_pixels_per_scene": estimate_unique_pixels(area_m2, int(spacing_m)),
+            }
+        )
+
+    return {
+        "area_name": area_name,
+        "prefecture_name": prefecture_name,
+        "approx_area_m2": round(area_m2, 3),
+        "approx_area_km2": round(area_m2 / 1_000_000, 6),
+        "estimates": estimates,
+    }
+
+
+def compute_point_means_for_scenes(
+    area_name: str,
+    prefecture_name: str,
+    metric_polygon: Polygon,
+    hdf5_file_paths: list[str],
+    spacing_m: int,
+    output_path: str,
+) -> dict:
+    points = generate_grid_points(metric_polygon, spacing_m)
+    scene_count = 0
+    footprint_metric: Polygon | None = None
+
+    for hdf5_path in hdf5_file_paths:
+        lst_scene = load_scene(hdf5_path, "Image_data/LST")
+        qa_scene = load_scene(hdf5_path, "Image_data/QA_flag")
+        scene_count += 1
+        if footprint_metric is None:
+            footprint_metric = lst_scene.footprint_metric
+
+        for point in points:
+            sample = sample_scene(lst_scene, point.lon, point.lat)
+            qa_sample = sample_scene(qa_scene, point.lon, point.lat)
+            if sample is None or qa_sample is None:
+                continue
+
+            lst_value, _, _ = sample
+            qa_value, _, _ = qa_sample
+            if not is_valid_qa_value(qa_value):
+                continue
+
+            point.sum_lst_c += lst_dn_to_celsius(lst_value, lst_scene)
+            point.valid_count += 1
+
+    output_path_obj = ensure_parent(output_path)
+    with output_path_obj.open("w", encoding="utf-8") as handle:
+        handle.write("point_id,lon,lat,x_6668,y_6668,valid_count,mean_lst_c\n")
+        for point in points:
+            mean_lst_c = ""
+            if point.valid_count > 0:
+                mean_lst_c = f"{point.sum_lst_c / point.valid_count:.6f}"
+            handle.write(
+                f"{point.point_id},{point.lon},{point.lat},{point.x_6668},{point.y_6668},{point.valid_count},{mean_lst_c}\n"
+            )
+
+    output_dir = output_path_obj.parent
+    points_geojson_path = output_dir / f"sampling_points_{spacing_m}m.geojson"
+    boundary_geojson_path = output_dir / f"sampling_boundary_{spacing_m}m.geojson"
+    preview_path = output_dir / f"sampling_preview_{spacing_m}m.png"
+    scene_preview_path = output_dir / f"scene_coverage_preview_{spacing_m}m.png"
+    summary_path = output_dir / f"sampling_summary_{spacing_m}m.json"
+
+    write_geojson(str(points_geojson_path), [point_to_feature(point, spacing_m) for point in points])
+    write_geojson(
+        str(boundary_geojson_path),
+        [polygon_to_feature(metric_polygon, {"area_name": area_name, "prefecture_name": prefecture_name})],
+    )
+    write_sampling_preview(str(preview_path), metric_polygon, points)
+    if footprint_metric is not None:
+        write_sampling_preview(str(scene_preview_path), metric_polygon, points, footprint_metric)
+
+    valid_points = sum(1 for point in points if point.valid_count > 0)
+    area_m2 = compute_polygon_area_m2(metric_polygon)
+    summary = {
+        "area_name": area_name,
+        "prefecture_name": prefecture_name,
+        "spacing_m": spacing_m,
+        "point_count": len(points),
+        "valid_point_count": valid_points,
+        "scene_count": scene_count,
+        "approx_area_km2": round(area_m2 / 1_000_000, 6),
+        "points_geojson_path": str(points_geojson_path),
+        "boundary_geojson_path": str(boundary_geojson_path),
+        "preview_path": str(preview_path),
+        "scene_preview_path": str(scene_preview_path),
+        "csv_path": str(output_path_obj),
+        "approx_unique_pixels_per_scene": estimate_unique_pixels(area_m2, spacing_m),
+    }
+    write_summary(str(summary_path), summary)
+    summary["summary_path"] = str(summary_path)
+    return summary
