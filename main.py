@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 
 from gcom import CSWWrapper, GcomDownloader
-from lst_analysis import compute_lst_point_means
+from lst_analysis import analysis_output_path, analysis_output_paths_from_csv_path, compute_lst_point_means
 from prefecture_bbox import get_prefecture_bbox
 
 
@@ -67,9 +67,9 @@ def run_analysis(
     download_dir: str,
     workspace_dir: str,
     spacing_m: int,
-    output_path: str,
     dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> str:
+    output_path = analysis_output_path(area_name, start, end, spacing_m)
     _log(
         f"[analyze] area={area_name} dataset={dataset_id} spacing={spacing_m}m "
         f"start={start.isoformat()} end={end.isoformat()} "
@@ -82,10 +82,18 @@ def run_analysis(
         download_dir,
         workspace_dir,
         spacing_m,
-        output_path,
+        str(output_path),
         dataset_id,
     )
-    _log(f"[analyze] wrote {csv_path}")
+    paths = analysis_output_paths_from_csv_path(csv_path)
+    _log(f"[analyze] wrote csv_path={paths['csv_path']}")
+    _log(f"[analyze] wrote points_geojson_path={paths['points_geojson_path']}")
+    _log(f"[analyze] wrote boundary_geojson_path={paths['boundary_geojson_path']}")
+    _log(f"[analyze] wrote summary_path={paths['summary_path']}")
+    for stat, path in paths["preview_paths"].items():
+        _log(f"[analyze] wrote preview_{stat}={path}")
+    for stat, path in paths["surface_paths"].items():
+        _log(f"[analyze] wrote surface_{stat}={path}")
     return csv_path
 
 
@@ -118,7 +126,6 @@ def build_parser() -> argparse.ArgumentParser:
     analysis_parser.add_argument("--spacing-m", type=int, required=True, help="Sampling spacing in meters.")
     analysis_parser.add_argument("--download-dir", required=True, help="Directory where downloaded files are written.")
     analysis_parser.add_argument("--workspace-dir", required=True, help="Workspace directory mounted into the container.")
-    analysis_parser.add_argument("--output-path", required=True, help="CSV output path.")
 
     return parser
 
@@ -150,7 +157,6 @@ def main(argv: list[str] | None = None) -> int:
             args.download_dir,
             args.workspace_dir,
             args.spacing_m,
-            args.output_path,
             args.dataset_id,
         )
         print(csv_path)

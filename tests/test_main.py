@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 import main
 
@@ -75,6 +76,7 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
 
 def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}
+    repo_root = Path(main.__file__).resolve().parent
 
     def fake_compute_lst_point_means(area_name, start, end, download_dir, workspace_dir, spacing_m, output_path, dataset_id):
         captured["area_name"] = area_name
@@ -104,8 +106,6 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
             "download/custom",
             "--workspace-dir",
             "workspace/custom",
-            "--output-path",
-            "workspace/analysis/京都府京都市/lst_mean_local_1000m.csv",
         ]
     )
 
@@ -117,8 +117,12 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
     assert captured["download_dir"] == "download/custom"
     assert captured["workspace_dir"] == "workspace/custom"
     assert captured["spacing_m"] == 1000
-    assert captured["output_path"] == "workspace/analysis/京都府京都市/lst_mean_local_1000m.csv"
+    assert captured["output_path"] == str(
+        repo_root / "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv"
+    )
 
     stdout = capsys.readouterr().out
     assert f"[analyze] area=京都府京都市 dataset={main.GCOM_C_LST_DATASET_ID} spacing=1000m start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
-    assert "[analyze] wrote workspace/analysis/京都府京都市/lst_mean_local_1000m.csv" in stdout
+    assert f"[analyze] wrote csv_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv'}" in stdout
+    assert f"[analyze] wrote points_geojson_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_points.geojson'}" in stdout
+    assert f"[analyze] wrote summary_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_summary.json'}" in stdout

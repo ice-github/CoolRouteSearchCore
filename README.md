@@ -40,8 +40,7 @@ uv run python main.py analyze \
   --end 2025-08-31 \
   --spacing-m 1000 \
   --download-dir download \
-  --workspace-dir workspace \
-  --output-path workspace/analysis/愛知県名古屋市/lst_mean_local_1000m.csv
+  --workspace-dir workspace
 ```
 
 京都市でも同じ要領で実行できます。
@@ -53,19 +52,19 @@ uv run python main.py analyze \
   --end 2025-08-31 \
   --spacing-m 1000 \
   --download-dir download \
-  --workspace-dir workspace \
-  --output-path workspace/analysis/京都府京都市/lst_mean_local_1000m.csv
+  --workspace-dir workspace
 ```
 
 ## Outputs
 
 `workspace/analysis/<area_name>/` に次の成果物を出力します。
 
-- `sampling_preview_{min,mean,max}_*.png`
-- `sampling_surface_{min,mean,max}_*.html`
-- `sampling_points_*.geojson`
-- `sampling_summary_*.json`
-- `lst_mean_local_*.csv`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m.csv`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_preview_{min,mean,max}.png`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_surface_{min,mean,max}.html`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_points.geojson`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_boundary.geojson`
+- `lst_mean_local_<area_name>_<start>_<end>_<spacing>m_sampling_summary.json`
 
 補足:
 

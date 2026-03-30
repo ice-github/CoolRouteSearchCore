@@ -966,9 +966,10 @@ def compute_point_means_for_scenes(
             )
 
     output_dir = output_path_obj.parent
-    points_geojson_path = output_dir / f"sampling_points_{spacing_m}m.geojson"
-    boundary_geojson_path = output_dir / f"sampling_boundary_{spacing_m}m.geojson"
-    summary_path = output_dir / f"sampling_summary_{spacing_m}m.json"
+    output_stem = output_path_obj.stem
+    points_geojson_path = output_dir / f"{output_stem}_sampling_points.geojson"
+    boundary_geojson_path = output_dir / f"{output_stem}_sampling_boundary.geojson"
+    summary_path = output_dir / f"{output_stem}_sampling_summary.json"
     polygon_wgs84 = transform_polygon_to_wgs84(metric_polygon)
 
     write_geojson(str(points_geojson_path), [point_to_feature(point, spacing_m) for point in points])
@@ -976,19 +977,22 @@ def compute_point_means_for_scenes(
         str(boundary_geojson_path),
         [polygon_to_feature(polygon_wgs84, {"area_name": area_name, "prefecture_name": prefecture_name})],
     )
-    preview_paths = write_sampling_preview_set(
-        output_dir,
-        "sampling_preview",
-        polygon_wgs84,
-        points,
-        spacing_m,
-    )
-    surface_paths = write_sampling_surface_set(
-        output_dir,
-        "sampling_surface",
-        points,
-        spacing_m,
-    )
+    preview_paths: dict[str, str] = {}
+    surface_paths: dict[str, str] = {}
+    for stat in LST_VIS_STATS:
+        preview_path = output_dir / f"{output_stem}_sampling_preview_{stat}.png"
+        surface_path = output_dir / f"{output_stem}_sampling_surface_{stat}.html"
+        write_sampling_preview(
+            str(preview_path),
+            polygon_wgs84,
+            points,
+            spacing_m,
+            value_fn=lambda point, stat=stat: sampling_stat_value(point, stat),
+            legend_title=sampling_stat_label(stat),
+        )
+        write_sampling_surface(str(surface_path), points, stat)
+        preview_paths[stat] = str(preview_path)
+        surface_paths[stat] = str(surface_path)
 
     valid_points = sum(1 for point in points if point.valid_count > 0)
     area_m2 = compute_polygon_area_m2(metric_polygon)

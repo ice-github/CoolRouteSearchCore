@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,13 @@ from analysis.runner import (
     temperature_to_color,
     transform_polygon_to_metric,
 )
-from lst_analysis import deduplicate_urls, infer_prefecture_name
+from lst_analysis import (
+    analysis_output_path,
+    analysis_output_paths_from_csv_path,
+    analysis_output_stem,
+    deduplicate_urls,
+    infer_prefecture_name,
+)
 
 
 SAMPLE_HDF5 = Path("/home/ubuntu/workspace/CoolRouteSearchCore/download/GC1SG1_20240101A01D_T0529_L2SG_LST_Q_3000.h5")
@@ -38,6 +45,39 @@ def test_infer_prefecture_name_uses_area_prefix() -> None:
 def test_infer_prefecture_name_raises_for_unknown_area() -> None:
     with pytest.raises(ValueError):
         infer_prefecture_name("名古屋市")
+
+
+def test_analysis_output_stem_and_paths_are_built_from_inputs() -> None:
+    stem = analysis_output_stem("京都府京都市", datetime(2025, 7, 1), datetime(2025, 8, 31), 1000)
+
+    assert stem == "lst_mean_local_京都府京都市_20250701_20250831_1000m"
+    assert analysis_output_path("京都府京都市", datetime(2025, 7, 1), datetime(2025, 8, 31), 1000) == (
+        Path(__file__).resolve().parents[1]
+        / "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv"
+    )
+
+
+def test_analysis_output_paths_from_csv_path_uses_common_stem() -> None:
+    paths = analysis_output_paths_from_csv_path(
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv"
+    )
+
+    assert paths["csv_path"] == "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv"
+    assert paths["points_geojson_path"] == (
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_points.geojson"
+    )
+    assert paths["boundary_geojson_path"] == (
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_boundary.geojson"
+    )
+    assert paths["summary_path"] == (
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_summary.json"
+    )
+    assert paths["preview_paths"]["mean"] == (
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_preview_mean.png"
+    )
+    assert paths["surface_paths"]["max"] == (
+        "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_surface_max.html"
+    )
 
 
 def test_load_scene_reads_hdf5_metadata() -> None:

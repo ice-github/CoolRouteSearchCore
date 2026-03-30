@@ -28,6 +28,45 @@ def deduplicate_urls(urls: list[str]) -> list[str]:
     return list(dict.fromkeys(urls))
 
 
+def sanitize_path_component(value: str) -> str:
+    return value.replace("/", "_").replace("\\", "_")
+
+
+def analysis_output_stem(area_name: str, start: datetime, end: datetime, spacing_m: int) -> str:
+    safe_area_name = sanitize_path_component(area_name)
+    return f"lst_mean_local_{safe_area_name}_{start:%Y%m%d}_{end:%Y%m%d}_{spacing_m}m"
+
+
+def analysis_output_dir(area_name: str) -> Path:
+    output_dir = _repo_root() / "workspace" / "analysis" / sanitize_path_component(area_name)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def analysis_output_path(area_name: str, start: datetime, end: datetime, spacing_m: int) -> Path:
+    return analysis_output_dir(area_name) / f"{analysis_output_stem(area_name, start, end, spacing_m)}.csv"
+
+
+def analysis_output_paths_from_csv_path(csv_path: str | Path) -> dict[str, str]:
+    csv_path_obj = Path(csv_path)
+    output_dir = csv_path_obj.parent
+    stem = csv_path_obj.stem
+    return {
+        "csv_path": str(csv_path_obj),
+        "points_geojson_path": str(output_dir / f"{stem}_sampling_points.geojson"),
+        "boundary_geojson_path": str(output_dir / f"{stem}_sampling_boundary.geojson"),
+        "summary_path": str(output_dir / f"{stem}_sampling_summary.json"),
+        "preview_paths": {
+            stat: str(output_dir / f"{stem}_sampling_preview_{stat}.png")
+            for stat in ("min", "mean", "max")
+        },
+        "surface_paths": {
+            stat: str(output_dir / f"{stem}_sampling_surface_{stat}.html")
+            for stat in ("min", "mean", "max")
+        },
+    }
+
+
 def infer_prefecture_name(area_name: str) -> str:
     prefectures = load_prefecture_bboxes()
     match = next((name for name in prefectures if area_name.startswith(name)), None)
@@ -41,9 +80,7 @@ def _repo_root() -> Path:
 
 
 def _create_output_dir(area_name: str) -> Path:
-    output_dir = _repo_root() / "workspace" / "analysis" / area_name.replace("/", "_")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
+    return analysis_output_dir(area_name)
 
 
 def _resolve_repo_path(path: str) -> Path:
