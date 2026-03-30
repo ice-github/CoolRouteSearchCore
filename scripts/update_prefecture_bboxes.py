@@ -3,10 +3,13 @@ import sys
 from datetime import datetime, timezone
 from math import ceil, floor
 from pathlib import Path
+from typing import TypedDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+import shapefile
 
 from administrative_division import AdministrativeDivisionInfo, get_bbox_from_shapefile
 
@@ -61,6 +64,14 @@ PREFECTURES = [
 ]
 
 
+class AdministrativeRecord(TypedDict):
+    municipality: str
+    ward_or_county: str
+    area: str
+    end_date: str
+    bbox: list[float]
+
+
 def canonical_prefecture_name(name: str) -> str:
     if name == "北海道":
         return name
@@ -71,9 +82,75 @@ def canonical_prefecture_name(name: str) -> str:
     return f"{name}県"
 
 
+def merge_bboxes(bboxes: list[list[float]]) -> list[int]:
+    min_lon = min(bbox[0] for bbox in bboxes)
+    min_lat = min(bbox[1] for bbox in bboxes)
+    max_lon = max(bbox[2] for bbox in bboxes)
+    max_lat = max(bbox[3] for bbox in bboxes)
+    return [
+        floor(min_lon),
+        floor(min_lat),
+        ceil(max_lon),
+        ceil(max_lat),
+    ]
+
+
+def load_current_administrative_records(shp_path: Path) -> list[AdministrativeRecord]:
+    records: list[AdministrativeRecord] = []
+    with shapefile.Reader(str(shp_path), encoding="cp932") as reader:
+        fields = [field[0] for field in reader.fields[1:]]
+        for shape_record in reader.iterShapeRecords():
+            values = dict(zip(fields, shape_record.record))
+            if values["N03_006"] != "":
+                continue
+            records.append(
+                {
+                    "municipality": values["N03_003"],
+                    "ward_or_county": values["N03_002"],
+                    "area": values["N03_004"],
+                    "end_date": values["N03_006"],
+                    "bbox": list(shape_record.shape.bbox),
+                }
+            )
+    return records
+
+
+def get_municipality_key(prefecture_name: str, record: AdministrativeRecord) -> str | None:
+    municipality = str(record["municipality"])
+    area = str(record["area"])
+
+    if not prefecture_name or not area:
+        return None
+    if not municipality:
+        return f"{prefecture_name}{area}"
+    if municipality.endswith("市") and area.endswith("区"):
+        return f"{prefecture_name}{municipality}"
+    if municipality.endswith("郡"):
+        return f"{prefecture_name}{municipality}{area}"
+    return None
+
+
+def build_municipality_bboxes(
+    prefecture_name: str,
+    records: list[AdministrativeRecord],
+) -> dict[str, list[int]]:
+    grouped_bboxes: dict[str, list[list[float]]] = {}
+    for record in records:
+        key = get_municipality_key(prefecture_name, record)
+        if key is None:
+            continue
+        grouped_bboxes.setdefault(key, []).append(record["bbox"])
+
+    return {
+        name: merge_bboxes(bboxes)
+        for name, bboxes in grouped_bboxes.items()
+    }
+
+
 def build_prefecture_bboxes(download_dir: str = "download", workspace_dir: str = "workspace") -> dict:
     division_info = AdministrativeDivisionInfo(download_dir, workspace_dir)
     prefecture_bboxes: dict[str, list[int]] = {}
+    municipality_bboxes: dict[str, list[int]] = {}
 
     for prefecture_name in PREFECTURES:
         division = division_info.get_administrative_division(prefecture_name)
@@ -84,12 +161,19 @@ def build_prefecture_bboxes(download_dir: str = "download", workspace_dir: str =
             ceil(max_lon),
             ceil(max_lat),
         ]
+        municipality_bboxes.update(
+            build_municipality_bboxes(
+                canonical_prefecture_name(prefecture_name),
+                load_current_administrative_records(division.shp_path),
+            )
+        )
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "国土数値情報 行政区域（ポリゴン）",
         "bbox_definition": "[floor(min_lon), floor(min_lat), ceil(max_lon), ceil(max_lat)]",
         "prefectures": prefecture_bboxes,
+        "municipalities": municipality_bboxes,
     }
 
 
