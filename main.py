@@ -28,6 +28,10 @@ def _parse_datetime(value: str) -> datetime:
         raise argparse.ArgumentTypeError(f"invalid datetime value: {value}") from error
 
 
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
 def run_download(
     prefecture_keyword: str = DEFAULT_DOWNLOAD_PREFECTURE,
     dataset_id: str = DEFAULT_DATASET_ID,
@@ -35,6 +39,10 @@ def run_download(
     utc_end: datetime = DEFAULT_DOWNLOAD_END,
     limit: int | None = 1,
 ) -> list[str]:
+    _log(
+        f"[download] prefecture={prefecture_keyword} dataset={dataset_id} "
+        f"start={utc_start.isoformat()} end={utc_end.isoformat()}"
+    )
     bbox = get_prefecture_bbox(prefecture_keyword)
 
     csw_wrapper = CSWWrapper()
@@ -45,9 +53,13 @@ def run_download(
     if limit is not None:
         hdf5_urls = hdf5_urls[:limit]
 
+    _log(f"[download] found {len(hdf5_urls)} URL(s); starting Playwright download")
+
     username, password = gportal_username_and_password_from_env()
     downloader = GcomDownloader("download", "workspace", username or "", password or "")
-    return downloader.get_downloaded_file_paths(hdf5_urls)
+    paths = downloader.get_downloaded_file_paths(hdf5_urls)
+    _log(f"[download] wrote {len(paths)} file(s)")
+    return paths
 
 
 def run_analysis(
@@ -60,7 +72,13 @@ def run_analysis(
     if output_path is None:
         safe_area_name = area_name.replace("/", "_")
         output_path = f"workspace/analysis/{safe_area_name}/lst_mean_local_{spacing_m}m.csv"
-    return compute_lst_point_means(area_name, start, end, spacing_m, output_path)
+    _log(
+        f"[analyze] area={area_name} spacing={spacing_m}m "
+        f"start={start.isoformat()} end={end.isoformat()}"
+    )
+    csv_path = compute_lst_point_means(area_name, start, end, spacing_m, output_path)
+    _log(f"[analyze] wrote {csv_path}")
+    return csv_path
 
 
 def build_parser() -> argparse.ArgumentParser:

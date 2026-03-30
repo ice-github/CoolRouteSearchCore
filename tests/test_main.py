@@ -10,7 +10,7 @@ def test_gportal_username_and_password_from_env_reads_expected_variables(monkeyp
     assert main.gportal_username_and_password_from_env() == ("demo-user", "demo-pass")
 
 
-def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch) -> None:
+def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}
 
     class DummyCswWrapper:
@@ -65,8 +65,13 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch) -> None
     assert captured["username"] == "demo-user"
     assert captured["password"] == "demo-pass"
 
+    stdout = capsys.readouterr().out
+    assert "[download] prefecture=京都 dataset=dataset-123 start=2024-01-03T00:00:00 end=2024-01-04T00:00:00" in stdout
+    assert "[download] found 2 URL(s); starting Playwright download" in stdout
+    assert "[download] wrote 2 file(s)" in stdout
 
-def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch) -> None:
+
+def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}
 
     def fake_compute_lst_point_means(area_name, start, end, spacing_m, output_path):
@@ -99,3 +104,7 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch) -> None:
     assert captured["end"] == datetime(2025, 8, 31)
     assert captured["spacing_m"] == 1000
     assert captured["output_path"] == "workspace/analysis/京都府京都市/lst_mean_local_1000m.csv"
+
+    stdout = capsys.readouterr().out
+    assert "[analyze] area=京都府京都市 spacing=1000m start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
+    assert "[analyze] wrote workspace/analysis/京都府京都市/lst_mean_local_1000m.csv" in stdout
