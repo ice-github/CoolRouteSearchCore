@@ -21,12 +21,15 @@ uv sync --group dev
 ## 実行
 
 ```bash
-uv run python main.py
+uv run python main.py download
 ```
 
-`main.py` はリポジトリ同梱の都道府県 `bbox` データから愛知県の範囲を使い、CSW で対象 HDF5 の URL を取得して、未取得ファイルのみを Docker 上の Playwright でダウンロードします。
+`main.py` はサブコマンドで使います。
 
-## 名古屋市 LST 解析
+- ダウンロード: `uv run python main.py download`
+- 解析: `uv run python main.py analyze`
+
+## LST 解析
 
 名古屋市の 2025 年 7 月〜8 月 LST をサンプル点ごとに平均化するための入口として [`lst_analysis.py`](/home/ubuntu/workspace/CoolRouteSearchCore/.worktrees/nagoya-lst-analysis/lst_analysis.py) を追加しています。
 
@@ -34,32 +37,23 @@ uv run python main.py
 - `generate_sampling_points(area_name, spacing_m, output_dir)`
 - `compute_lst_point_means(area_name, start, end, spacing_m, output_path)`
 
-解析は `uv` で直接動きます。
-
-`uv run python main.py` は G-Portal からのダウンロード用で、`sampling_preview_*.png` の生成までは行いません。  
-可視化付きの `sampling_preview` を作るときは、`compute_lst_point_means` を直接呼びます。
+解析は `uv` で直接動きます。`main.py analyze` から呼ぶのがいちばん簡単です。
 
 ```bash
-uv run python - <<'PY'
-from datetime import datetime
-from lst_analysis import compute_lst_point_means
+uv run python main.py analyze \
+  --area-name 愛知県名古屋市 \
+  --start 2025-07-01 \
+  --end 2025-08-31 \
+  --spacing-m 1000
 
-area_name = "愛知県名古屋市"
-start = datetime(2025, 7, 1)
-end = datetime(2025, 8, 31)
-
-for spacing in (1000, 100):
-    compute_lst_point_means(
-        area_name,
-        start,
-        end,
-        spacing,
-        f"workspace/analysis/{area_name}/lst_mean_local_{spacing}m.csv",
-    )
-PY
+uv run python main.py analyze \
+  --area-name 京都府京都市 \
+  --start 2025-07-01 \
+  --end 2025-08-31 \
+  --spacing-m 1000
 ```
 
-この実行で、`workspace/analysis/愛知県名古屋市/` に次が出ます。
+この実行で、`workspace/analysis/<area_name>/` に次が出ます。
 
 - `sampling_preview_{mean,min,max}_*.png`
 - `sampling_surface_{mean,min,max}_*.html`
@@ -70,7 +64,16 @@ PY
 - 取得済み HDF5 は既存の `download/` を再利用します。
 - 最新の行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
 - HDF5 は `Image_data/LST` と `Image_data/QA_flag` を `rasterio` で直接開き、GCOM-C の等面積投影上でサンプル点評価します。
-- 可視化成果物として `sampling_preview_{min,mean,max}_*.png` と `sampling_surface_{min,mean,max}_*.html` を出力します。3D は `z = 温度` と `色 = 温度` を併用し、点は枠なしの塗りつぶし表示です。
+- 可視化成果物として `sampling_preview_{min,mean,max}_*.png` と `sampling_surface_{min,mean,max}_*.html` を出力します。3D は `z = 温度` と `色 = 温度` を併用し、点は小さな球状マーカーで重ねます。
+
+ダウンロードだけしたい場合は、たとえばこうです。
+
+```bash
+uv run python main.py download --prefecture 愛知
+uv run python main.py download --prefecture 京都
+```
+
+`download` は prefecture キーワードを `get_prefecture_bbox()` に渡して、CSW で対象 HDF5 の URL を取得し、未取得ファイルのみを Docker 上の Playwright でダウンロードします。
 
 ## テスト
 
