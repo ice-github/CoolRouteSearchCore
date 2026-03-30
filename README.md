@@ -1,43 +1,37 @@
 # CoolRouteSearchCore
 
-JAXA G-Portal の GCOM-C HDF5 を Playwright で取得し、`uv` 上で LST を解析する最小構成です。
+JAXA G-Portal の GCOM-C HDF5 を取得して、LST を解析するための最小構成です。
 
-## 必要な環境変数
-
-- `GPORTAL_USER`
-- `GPORTAL_PASS`
-
-## 必要なコマンド
+## Requirements
 
 - `uv`
 - `docker`
+- `GPORTAL_USER`
+- `GPORTAL_PASS`
 
-## セットアップ
+## Setup
 
 ```bash
 uv sync --group dev
 ```
 
-## 実行
+## Quick Start
+
+`main.py` はサブコマンドで使います。GCOM-C LST の dataset ID は固定値 `10002019` なので、通常は指定不要です。
+
+### Download
 
 ```bash
-uv run python main.py download --prefecture 愛知 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download --workspace-dir workspace
+uv run python main.py download \
+  --prefecture 愛知 \
+  --start 2024-01-01 \
+  --end 2024-01-02 \
+  --limit 1 \
+  --download-dir download \
+  --workspace-dir workspace
 ```
 
-`main.py` はサブコマンドで使います。
-
-- ダウンロード: `uv run python main.py download --prefecture 愛知 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download --workspace-dir workspace`
-- 解析: `uv run python main.py analyze --area-name 愛知県名古屋市 --start 2025-07-01 --end 2025-08-31 --spacing-m 1000 --download-dir download --workspace-dir workspace --output-path workspace/analysis/愛知県名古屋市/lst_mean_local_1000m.csv`
-
-## LST 解析
-
-名古屋市の 2025 年 7 月〜8 月 LST をサンプル点ごとに平均化するための入口として [`lst_analysis.py`](/home/ubuntu/workspace/CoolRouteSearchCore/.worktrees/nagoya-lst-analysis/lst_analysis.py) を追加しています。
-
-- `estimate_sampling_load(area_name, start, end, download_dir, workspace_dir, [1000, 100, 10], dataset_id=10002019)`
-- `generate_sampling_points(area_name, spacing_m, output_dir, download_dir, workspace_dir, dataset_id=10002019)`
-- `compute_lst_point_means(area_name, start, end, download_dir, workspace_dir, spacing_m, output_path, dataset_id=10002019)`
-
-解析は `uv` で直接動きます。`main.py analyze` から呼ぶのがいちばん簡単です。
+### Analyze
 
 ```bash
 uv run python main.py analyze \
@@ -48,7 +42,11 @@ uv run python main.py analyze \
   --download-dir download \
   --workspace-dir workspace \
   --output-path workspace/analysis/愛知県名古屋市/lst_mean_local_1000m.csv
+```
 
+京都市でも同じ要領で実行できます。
+
+```bash
 uv run python main.py analyze \
   --area-name 京都府京都市 \
   --start 2025-07-01 \
@@ -59,32 +57,39 @@ uv run python main.py analyze \
   --output-path workspace/analysis/京都府京都市/lst_mean_local_1000m.csv
 ```
 
-この実行で、`workspace/analysis/<area_name>/` に次が出ます。
+## Outputs
 
-- `sampling_preview_{mean,min,max}_*.png`
-- `sampling_surface_{mean,min,max}_*.html`
+`workspace/analysis/<area_name>/` に次の成果物を出力します。
+
+- `sampling_preview_{min,mean,max}_*.png`
+- `sampling_surface_{min,mean,max}_*.html`
 - `sampling_points_*.geojson`
 - `sampling_summary_*.json`
 - `lst_mean_local_*.csv`
 
+補足:
+
+- `sampling_preview_*.png` はサンプリング点の 2D 可視化です。
+- `sampling_surface_*.html` は 3D 可視化です。`z = 温度` と `色 = 温度` を併用します。
+- `dataset-id` は GCOM-C LST 用の固定値 `10002019` を使います。
+- `--download-dir` と `--workspace-dir` は用途ごとに分けられます。
+
+## LST Analysis API
+
+`lst_analysis.py` は `main.py analyze` から使うのが簡単です。直接使う場合は、以下の関数を呼びます。
+
+- `estimate_sampling_load(area_name, start, end, download_dir, workspace_dir, [1000, 100, 10], dataset_id=10002019)`
+- `generate_sampling_points(area_name, spacing_m, output_dir, download_dir, workspace_dir, dataset_id=10002019)`
+- `compute_lst_point_means(area_name, start, end, download_dir, workspace_dir, spacing_m, output_path, dataset_id=10002019)`
+
+## Notes
+
 - 取得済み HDF5 は既存の `download/` を再利用します。
-- 最新の行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
+- 行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
 - HDF5 は `Image_data/LST` と `Image_data/QA_flag` を `rasterio` で直接開き、GCOM-C の等面積投影上でサンプル点評価します。
-- 可視化成果物として `sampling_preview_{min,mean,max}_*.png` と `sampling_surface_{min,mean,max}_*.html` を出力します。3D は `z = 温度` と `色 = 温度` を併用し、点は小さな球状マーカーで重ねます。
+- ダウンロードは prefecture キーワードを `get_prefecture_bbox()` に渡し、CSW で対象 HDF5 の URL を取得して、未取得ファイルのみを Docker 上の Playwright で取得します。
 
-ダウンロードだけしたい場合は、たとえばこうです。
-
-```bash
-uv run python main.py download --prefecture 愛知
-uv run python main.py download --prefecture 京都 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download --workspace-dir workspace
-uv run python main.py download --prefecture 京都 --start 2024-01-01 --end 2024-01-02 --limit 1 --download-dir download/kyoto --workspace-dir workspace/kyoto
-```
-
-`download` は prefecture キーワードを `get_prefecture_bbox()` に渡して、CSW で対象 HDF5 の URL を取得し、未取得ファイルのみを Docker 上の Playwright でダウンロードします。
-`--download-dir` と `--workspace-dir` も指定できるので、ダウンロード先を用途ごとに分けられます。
-`dataset-id` は GCOM-C LST の固定値 `10002019` をコード側で使うため、通常は指定不要です。
-
-## テスト
+## Tests
 
 ```bash
 uv run pytest
@@ -100,14 +105,14 @@ GitHub Secrets:
 
 - `GPORTAL_USER`, `GPORTAL_PASS`: `G-Portal Integration` に必要
 
-## 都道府県 bbox データ
+## Prefecture BBoxes
 
 全都道府県の `bbox` は `data/prefecture_bboxes.json` に含めています。
 
 - 形式は `[floor(min_lon), floor(min_lat), ceil(max_lon), ceil(max_lat)]` です。
 - 生成元は国土数値情報の「行政区域（ポリゴン）」です。
 
-## bbox の更新方法
+## Update BBoxes
 
 行政界データの更新に追従したい場合は、次のコマンドで `bbox` 一覧を再生成できます。
 
