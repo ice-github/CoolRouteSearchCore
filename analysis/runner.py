@@ -544,6 +544,16 @@ def preview_canvas_size(
     return width, height
 
 
+def preview_point_radius(spacing_m: int) -> int:
+    if spacing_m <= 100:
+        return 2
+    if spacing_m <= 500:
+        return 2
+    if spacing_m <= 1000:
+        return 15
+    return 3
+
+
 def write_sampling_preview(
     path_str: str,
     polygon_wgs84: Polygon,
@@ -554,8 +564,8 @@ def write_sampling_preview(
     legend_title: str = "Mean LST (°C)",
 ) -> str:
     path = ensure_parent(path_str)
-    point_radius = 1 if spacing_m <= 100 else 2 if spacing_m <= 500 else 3
-    padding = 16 if spacing_m <= 100 else 48
+    point_radius = preview_point_radius(spacing_m)
+    padding = max(16 if spacing_m <= 100 else 48, point_radius * 2 + 8)
     image = _render_preview_panel(
         polygon_wgs84,
         points,

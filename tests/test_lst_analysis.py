@@ -11,6 +11,7 @@ from analysis.runner import (
     generate_grid_points,
     load_scene,
     point_to_feature,
+    preview_point_radius,
     sample_scene,
     write_sampling_preview_set,
     temperature_to_color,
@@ -172,3 +173,8 @@ def test_draw_points_uses_fill_only_without_outline() -> None:
     assert len(dummy_draw.calls) == 1
     _, kwargs = dummy_draw.calls[0]
     assert "outline" not in kwargs
+
+
+def test_preview_point_radius_scales_for_100m_and_1000m() -> None:
+    assert preview_point_radius(100) == 2
+    assert preview_point_radius(1000) == 15
