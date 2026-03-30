@@ -25,9 +25,11 @@ def load_job() -> dict:
 
 def login(page, job: dict, username: str, password: str) -> None:
     login_config = job["login"]
+    print("[playwright] opening login page", flush=True)
     page.goto(login_config["url"], wait_until="domcontentloaded")
     page.locator(login_config["username_selector"]).fill(username)
     page.locator(login_config["password_selector"]).fill(password)
+    print("[playwright] submitting credentials", flush=True)
     auth_result = page.evaluate(
         """async ({user, password}) => {
             const response = await fetch('/gpr/auth/authenticate.json', {
@@ -47,6 +49,7 @@ def login(page, job: dict, username: str, password: str) -> None:
     if auth_result.get("status") != 1:
         raise RuntimeError(f"login failed: {auth_result}")
 
+    print("[playwright] waiting for authenticated session", flush=True)
     page.goto("https://gportal.jaxa.jp/gpr/index", wait_until="domcontentloaded")
     try:
         page.wait_for_function(
@@ -58,19 +61,22 @@ def login(page, job: dict, username: str, password: str) -> None:
         page.wait_for_load_state("networkidle", timeout=15000)
         if page.title() != login_config["success_title"]:
             raise RuntimeError(f"login failed after auth: current title is {page.title()!r}")
+    print("[playwright] login complete", flush=True)
 
 
 def download_files(page, job: dict) -> None:
     download_dir = Path(job["download_dir"])
     download_dir.mkdir(parents=True, exist_ok=True)
+    total = len(job["urls"])
+    print(f"[playwright] processing {total} URL(s)", flush=True)
 
-    for url in job["urls"]:
+    for index, url in enumerate(job["urls"], start=1):
         target_path = download_dir / get_filename_from_url(url)
         if target_path.exists():
-            print(f"skip existing file: {target_path}")
+            print(f"[playwright] skip existing {index}/{total}: {target_path}", flush=True)
             continue
 
-        print(f"downloading: {url}")
+        print(f"[playwright] downloading {index}/{total}: {url}", flush=True)
         with page.expect_download(timeout=120000) as download_info:
             try:
                 page.goto(url, wait_until="commit")
@@ -80,7 +86,9 @@ def download_files(page, job: dict) -> None:
 
         download = download_info.value
         download.save_as(str(target_path))
-        print(f"saved: {target_path}")
+        print(f"[playwright] saved {index}/{total}: {target_path}", flush=True)
+
+    print("[playwright] download loop complete", flush=True)
 
 
 def main() -> None:

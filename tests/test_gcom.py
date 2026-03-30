@@ -92,3 +92,37 @@ def test_run_playwright_download_builds_expected_docker_command(tmp_path: Path, 
     assert "mcr.microsoft.com/playwright/python:v1.58.0-noble" in command
     assert captured["cwd"] == downloader._repo_root
     assert captured["check"] is False
+
+
+def test_get_downloaded_file_paths_logs_progress_and_skips_existing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    download_dir = tmp_path / "download"
+    workspace_dir = tmp_path / "workspace"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_url = "https://example.com/files/existing.h5"
+    missing_url = "https://example.com/files/missing.h5"
+    (download_dir / "existing.h5").write_text("present", encoding="utf-8")
+
+    downloader = GcomDownloader(str(download_dir), str(workspace_dir), "user", "pass")
+
+    monkeypatch.setattr(downloader, "_ensure_docker", lambda: None)
+
+    def fake_run_playwright_download(job_file: Path) -> None:
+        job = job_file.read_text(encoding="utf-8")
+        assert missing_url in job
+        (download_dir / "missing.h5").write_text("downloaded", encoding="utf-8")
+
+    monkeypatch.setattr(downloader, "_run_playwright_download", fake_run_playwright_download)
+
+    paths = downloader.get_downloaded_file_paths([existing_url, missing_url])
+
+    assert paths == [str(download_dir / "existing.h5"), str(download_dir / "missing.h5")]
+    stdout = capsys.readouterr().out
+    assert "[download] resolved 2 file path(s); 1 missing, 1 already present" in stdout
+    assert "[download] downloading 1 missing file(s)" in stdout
+    assert "[download] verified 2 downloaded file(s)" in stdout

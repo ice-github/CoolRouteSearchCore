@@ -9,6 +9,10 @@ from urllib.parse import urlencode, urlparse
 import requests
 
 
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
 class CSWWrapper:
     def __init__(self) -> None:
         self._base_url = "https://gportal.jaxa.jp/csw/csw"
@@ -50,8 +54,16 @@ class CSWWrapper:
 
         intervals = self._split_intervals(utc_start, utc_end, 3)
         h5_urls: list[str] = []
+        _log(
+            f"[csw] querying dataset={dataset_id} intervals={len(intervals)} "
+            f"start={utc_start.isoformat()} end={utc_end.isoformat()} bbox={bbox}"
+        )
 
-        for start, end in intervals:
+        for index, (start, end) in enumerate(intervals, start=1):
+            _log(
+                f"[csw] interval {index}/{len(intervals)} "
+                f"start={start.isoformat()} end={end.isoformat()}"
+            )
             url = self._create_query_url(
                 dataset_id,
                 self._get_string_from_date(start),
@@ -59,12 +71,16 @@ class CSWWrapper:
                 ",".join(str(v) for v in bbox),
             )
             data = self._fetch_data(url)
+            interval_urls = 0
             for feature in data.get("features", []):
                 product = feature.get("properties", {}).get("product", {})
                 filename = product.get("fileName")
                 if filename:
                     h5_urls.append(filename)
+                    interval_urls += 1
+            _log(f"[csw] interval {index}/{len(intervals)} yielded {interval_urls} URL(s)")
 
+        _log(f"[csw] found {len(h5_urls)} URL(s) total")
         return h5_urls
 
 
@@ -97,6 +113,7 @@ class GcomDownloader:
             raise ValueError("G-Portal credentials are required. Set GPORTAL_USER and GPORTAL_PASS.")
 
     def _ensure_docker(self) -> None:
+        _log("[download] checking docker availability")
         result = subprocess.run(
             ["docker", "version", "--format", "{{.Server.Version}}"],
             capture_output=True,
@@ -133,9 +150,11 @@ class GcomDownloader:
             delete=False,
         ) as handle:
             json.dump(payload, handle)
+            _log(f"[download] wrote job file {handle.name} for {len(urls)} URL(s)")
             return Path(handle.name)
 
     def _run_playwright_download(self, job_file: Path) -> None:
+        _log(f"[download] starting Playwright container for job file {job_file.name}")
         command = [
             "docker",
             "run",
@@ -160,6 +179,7 @@ class GcomDownloader:
         result = subprocess.run(command, cwd=self._repo_root, check=False)
         if result.returncode != 0:
             raise RuntimeError("Playwright download container failed")
+        _log("[download] Playwright container finished successfully")
 
     def get_downloaded_file_paths(self, urls: list[str]) -> list[str]:
         self._require_credentials()
@@ -173,18 +193,27 @@ class GcomDownloader:
             if not path.exists():
                 missing_urls.append(url)
 
+        _log(
+            f"[download] resolved {len(resolved_paths)} file path(s); "
+            f"{len(missing_urls)} missing, {len(resolved_paths) - len(missing_urls)} already present"
+        )
+
         if not missing_urls:
+            _log("[download] all requested files already exist; skipping Playwright download")
             return resolved_paths
 
+        _log(f"[download] downloading {len(missing_urls)} missing file(s)")
         job_file = self._create_job_file(missing_urls)
         try:
             self._run_playwright_download(job_file)
         finally:
             if job_file.exists():
                 job_file.unlink()
+                _log(f"[download] removed job file {job_file.name}")
 
         for path in resolved_paths:
             if not os.path.exists(path):
                 raise FileNotFoundError(f"downloaded file not found: {path}")
 
+        _log(f"[download] verified {len(resolved_paths)} downloaded file(s)")
         return resolved_paths
