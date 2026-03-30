@@ -7,6 +7,11 @@ from lst_analysis import compute_lst_point_means
 from prefecture_bbox import get_prefecture_bbox
 
 
+GCOM_C_LST_DATASET_ID = "10002019"
+# This repo's examples target the GCOM-C LST product on G-Portal, so the
+# dataset ID is fixed here unless the upstream catalog ID changes.
+
+
 def gportal_username_and_password_from_env() -> tuple[str | None, str | None]:
     return os.environ.get("GPORTAL_USER"), os.environ.get("GPORTAL_PASS")
 
@@ -24,12 +29,12 @@ def _log(message: str) -> None:
 
 def run_download(
     prefecture_keyword: str,
-    dataset_id: str,
     utc_start: datetime,
     utc_end: datetime,
     limit: int | None,
     download_dir: str,
     workspace_dir: str,
+    dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> list[str]:
     _log(
         f"[download] prefecture={prefecture_keyword} dataset={dataset_id} "
@@ -59,11 +64,11 @@ def run_analysis(
     area_name: str,
     start: datetime,
     end: datetime,
-    dataset_id: str,
     download_dir: str,
     workspace_dir: str,
     spacing_m: int,
     output_path: str,
+    dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> str:
     _log(
         f"[analyze] area={area_name} dataset={dataset_id} spacing={spacing_m}m "
@@ -90,7 +95,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     download_parser = subparsers.add_parser("download", help="Download HDF5 data for a prefecture.")
     download_parser.add_argument("--prefecture", required=True, help="Prefecture keyword used to find the bbox.")
-    download_parser.add_argument("--dataset-id", required=True, help="CSW dataset ID.")
+    download_parser.add_argument(
+        "--dataset-id",
+        default=GCOM_C_LST_DATASET_ID,
+        help=f"CSW dataset ID. Defaults to the fixed GCOM-C LST ID {GCOM_C_LST_DATASET_ID}.",
+    )
     download_parser.add_argument("--start", type=_parse_datetime, required=True, help="UTC start datetime in ISO format.")
     download_parser.add_argument("--end", type=_parse_datetime, required=True, help="UTC end datetime in ISO format.")
     download_parser.add_argument("--limit", type=int, required=True, help="Maximum number of URLs to download. Use 0 for all.")
@@ -101,7 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
     analysis_parser.add_argument("--area-name", required=True, help="Administrative area name such as 愛知県名古屋市.")
     analysis_parser.add_argument("--start", type=_parse_datetime, required=True, help="UTC start datetime in ISO format.")
     analysis_parser.add_argument("--end", type=_parse_datetime, required=True, help="UTC end datetime in ISO format.")
-    analysis_parser.add_argument("--dataset-id", required=True, help="CSW dataset ID.")
+    analysis_parser.add_argument(
+        "--dataset-id",
+        default=GCOM_C_LST_DATASET_ID,
+        help=f"CSW dataset ID. Defaults to the fixed GCOM-C LST ID {GCOM_C_LST_DATASET_ID}.",
+    )
     analysis_parser.add_argument("--spacing-m", type=int, required=True, help="Sampling spacing in meters.")
     analysis_parser.add_argument("--download-dir", required=True, help="Directory where downloaded files are written.")
     analysis_parser.add_argument("--workspace-dir", required=True, help="Workspace directory mounted into the container.")
@@ -118,12 +131,12 @@ def main(argv: list[str] | None = None) -> int:
         limit = None if args.limit == 0 else args.limit
         paths = run_download(
             args.prefecture,
-            args.dataset_id,
             args.start,
             args.end,
             limit,
             args.download_dir,
             args.workspace_dir,
+            args.dataset_id,
         )
         for path in paths:
             print(path)
@@ -134,11 +147,11 @@ def main(argv: list[str] | None = None) -> int:
             args.area_name,
             args.start,
             args.end,
-            args.dataset_id,
             args.download_dir,
             args.workspace_dir,
             args.spacing_m,
             args.output_path,
+            args.dataset_id,
         )
         print(csv_path)
         return 0

@@ -16,6 +16,10 @@ from gcom import CSWWrapper, GcomDownloader
 from prefecture_bbox import get_administrative_bbox, load_prefecture_bboxes
 
 
+GCOM_C_LST_DATASET_ID = "10002019"
+# G-Portal's GCOM-C LST product is queried through this dataset ID.
+
+
 def gportal_username_and_password_from_env() -> tuple[str | None, str | None]:
     return os.environ.get("GPORTAL_USER"), os.environ.get("GPORTAL_PASS")
 
@@ -58,10 +62,10 @@ def estimate_sampling_load(
     area_name: str,
     start: datetime,
     end: datetime,
-    dataset_id: str,
     download_dir: str,
     workspace_dir: str,
     spacings_m: list[int],
+    dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> list[dict]:
     urls = _get_hdf5_urls_for_area(area_name, start, end, dataset_id)
     resolved_download_dir = _resolve_repo_path(download_dir)
@@ -75,7 +79,14 @@ def estimate_sampling_load(
     return result["estimates"]
 
 
-def generate_sampling_points(area_name: str, spacing_m: int, output_dir: str, download_dir: str, workspace_dir: str) -> dict:
+def generate_sampling_points(
+    area_name: str,
+    spacing_m: int,
+    output_dir: str,
+    download_dir: str,
+    workspace_dir: str,
+    dataset_id: str = GCOM_C_LST_DATASET_ID,
+) -> dict:
     resolved_download_dir = _resolve_repo_path(download_dir)
     resolved_workspace_dir = _resolve_repo_path(workspace_dir)
     prefecture_name = infer_prefecture_name(area_name)
@@ -136,11 +147,11 @@ def compute_lst_point_means(
     area_name: str,
     start: datetime,
     end: datetime,
-    dataset_id: str,
     download_dir: str,
     workspace_dir: str,
     spacing_m: int,
     output_path: str,
+    dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> str:
     urls = _get_hdf5_urls_for_area(area_name, start, end, dataset_id)
     username, password = gportal_username_and_password_from_env()

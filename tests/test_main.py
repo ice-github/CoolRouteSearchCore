@@ -43,8 +43,6 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
             "download",
             "--prefecture",
             "京都",
-            "--dataset-id",
-            "dataset-123",
             "--start",
             "2024-01-03",
             "--end",
@@ -59,7 +57,7 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
     )
 
     assert exit_code == 0
-    assert captured["dataset_id"] == "dataset-123"
+    assert captured["dataset_id"] == main.GCOM_C_LST_DATASET_ID
     assert captured["utc_start"] == datetime(2024, 1, 3)
     assert captured["utc_end"] == datetime(2024, 1, 4)
     assert captured["bbox"] == [1, 2, 3, 4]
@@ -70,7 +68,7 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
     assert captured["password"] == "demo-pass"
 
     stdout = capsys.readouterr().out
-    assert "[download] prefecture=京都 dataset=dataset-123 start=2024-01-03T00:00:00 end=2024-01-04T00:00:00" in stdout
+    assert f"[download] prefecture=京都 dataset={main.GCOM_C_LST_DATASET_ID} start=2024-01-03T00:00:00 end=2024-01-04T00:00:00" in stdout
     assert "[download] found 2 URL(s); starting Playwright download" in stdout
     assert "[download] wrote 2 file(s)" in stdout
 
@@ -100,8 +98,6 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
             "2025-07-01",
             "--end",
             "2025-08-31",
-            "--dataset-id",
-            "dataset-123",
             "--spacing-m",
             "1000",
             "--download-dir",
@@ -117,12 +113,12 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
     assert captured["area_name"] == "京都府京都市"
     assert captured["start"] == datetime(2025, 7, 1)
     assert captured["end"] == datetime(2025, 8, 31)
-    assert captured["dataset_id"] == "dataset-123"
+    assert captured["dataset_id"] == main.GCOM_C_LST_DATASET_ID
     assert captured["download_dir"] == "download/custom"
     assert captured["workspace_dir"] == "workspace/custom"
     assert captured["spacing_m"] == 1000
     assert captured["output_path"] == "workspace/analysis/京都府京都市/lst_mean_local_1000m.csv"
 
     stdout = capsys.readouterr().out
-    assert "[analyze] area=京都府京都市 dataset=dataset-123 spacing=1000m start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
+    assert f"[analyze] area=京都府京都市 dataset={main.GCOM_C_LST_DATASET_ID} spacing=1000m start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
     assert "[analyze] wrote workspace/analysis/京都府京都市/lst_mean_local_1000m.csv" in stdout
