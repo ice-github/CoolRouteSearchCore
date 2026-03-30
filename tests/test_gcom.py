@@ -86,6 +86,9 @@ def test_run_playwright_download_builds_expected_docker_command(tmp_path: Path, 
     assert f"GPORTAL_USER={downloader._username}" in command
     assert f"GPORTAL_PASS={downloader._password}" in command
     assert f"JOB_PATH=/jobs/{job_file.name}" in command
-    assert "/work/playwright/download_gportal.py" in command
+    assert "bash" in command
+    assert "-lc" in command
+    assert "python3 -m pip install --quiet playwright==1.58.0 && python3 /work/playwright/download_gportal.py" in command
+    assert "mcr.microsoft.com/playwright/python:v1.58.0-noble" in command
     assert captured["cwd"] == downloader._repo_root
     assert captured["check"] is False

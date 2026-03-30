@@ -78,7 +78,8 @@ class JPortalLogin:
 
 
 class GcomDownloader:
-    _image_name = "mcr.microsoft.com/playwright/python:v1.55.0-noble"
+    # Keep this aligned with the Playwright Python package the container runs.
+    _image_name = "mcr.microsoft.com/playwright/python:v1.58.0-noble"
 
     def __init__(self, download_dir: str, workspace_dir: str, username: str, password: str) -> None:
         self._repo_root = Path(__file__).resolve().parent
@@ -152,8 +153,9 @@ class GcomDownloader:
             "-v",
             f"{(self._repo_root / 'playwright').resolve()}:/work/playwright:ro",
             self._image_name,
-            "python3",
-            "/work/playwright/download_gportal.py",
+            "bash",
+            "-lc",
+            "python3 -m pip install --quiet playwright==1.58.0 && python3 /work/playwright/download_gportal.py",
         ]
         result = subprocess.run(command, cwd=self._repo_root, check=False)
         if result.returncode != 0:

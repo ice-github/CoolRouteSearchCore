@@ -24,6 +24,9 @@ package = false
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "integration: requires network, G-Portal credentials, and Docker",
+]
 filterwarnings = [
     "ignore:Dataset has no geotransform, gcps, or rpcs.*:rasterio.errors.NotGeoreferencedWarning",
 ]

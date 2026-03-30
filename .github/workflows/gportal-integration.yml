@@ -12,6 +12,7 @@ jobs:
     env:
       GPORTAL_USER: ${{ secrets.GPORTAL_USER }}
       GPORTAL_PASS: ${{ secrets.GPORTAL_PASS }}
+      RUN_GPORTAL_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -27,5 +28,5 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --group dev
 
-      - name: Run G-Portal example download
-        run: uv run python main.py
+      - name: Run G-Portal integration test
+        run: uv run pytest tests/test_gportal_integration.py
