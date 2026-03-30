@@ -39,6 +39,7 @@ uv run python main.py analyze \
   --start 2025-07-01 \
   --end 2025-08-31 \
   --spacing-m 1000 \
+  --parallelism 4 \
   --download-dir download \
   --workspace-dir workspace
 ```
@@ -51,6 +52,7 @@ uv run python main.py analyze \
   --start 2025-07-01 \
   --end 2025-08-31 \
   --spacing-m 1000 \
+  --parallelism 4 \
   --download-dir download \
   --workspace-dir workspace
 ```
@@ -75,6 +77,7 @@ uv run python main.py analyze \
 - `sampling_topdown_*.png` は 3D 可視化を orthographic の真上視点で描いたものです。
 - `sampling_compare_*.png` は 2D preview と 3D topdown を左右に並べた比較画像です。
 - `dataset-id` は GCOM-C LST 用の固定値 `10002019` を使います。
+- `--parallelism` は scene 集計の並列度です。省略時は `4` です。
 - `--download-dir` と `--workspace-dir` は用途ごとに分けられます。
 
 ## LST Analysis API
@@ -83,7 +86,7 @@ uv run python main.py analyze \
 
 - `estimate_sampling_load(area_name, start, end, download_dir, workspace_dir, [1000, 100, 10], dataset_id=10002019)`
 - `generate_sampling_points(area_name, spacing_m, output_dir, download_dir, workspace_dir, dataset_id=10002019)`
-- `compute_lst_point_means(area_name, start, end, download_dir, workspace_dir, spacing_m, output_path, dataset_id=10002019)`
+- `compute_lst_point_means(area_name, start, end, download_dir, workspace_dir, spacing_m, output_path, dataset_id=10002019, parallelism=4)`
 
 ## Notes
 

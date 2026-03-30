@@ -19,6 +19,7 @@ from analysis.runner import (
     point_to_feature,
     preview_point_radius,
     sample_scene,
+    sampling_surface_default_camera,
     sampling_surface_topdown_camera,
     write_sampling_point_cloud,
     write_sampling_compare_image,
@@ -381,6 +382,7 @@ def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -
     assert list(point_trace.z) == [24.0, 28.0, 30.0, 32.0]
     assert list(point_trace.marker.color) == [24.0, 28.0, 30.0, 32.0]
     assert figure.layout.scene.zaxis.range is None
+    assert figure.layout.scene.camera.to_plotly_json() == sampling_surface_default_camera()
     assert figure.layout.scene.xaxis.title.text == "Longitude"
     assert figure.layout.scene.yaxis.title.text == "Latitude"
     assert figure.layout.scene.aspectmode == "manual"
@@ -652,6 +654,16 @@ def test_sampling_surface_topdown_camera_is_xy_perpendicular() -> None:
     assert camera["projection"] == {"type": "orthographic"}
 
 
+def test_sampling_surface_default_camera_starts_in_3d_view() -> None:
+    camera = sampling_surface_default_camera()
+
+    assert camera["eye"]["x"] > 0.0
+    assert camera["eye"]["y"] > 0.0
+    assert camera["eye"]["z"] > 0.0
+    assert camera["up"] == {"x": 0.0, "y": 0.0, "z": 1.0}
+    assert camera["projection"] == {"type": "perspective"}
+
+
 def test_point_cloud_render_matches_2d_preview_before_surface(tmp_path: Path) -> None:
     polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
     points = [
@@ -809,6 +821,7 @@ def test_compute_lst_point_means_emits_step_logs_and_passes_logger(monkeypatch, 
         hdf5_file_paths,
         spacing_m,
         output_path,
+        parallelism=4,
         log_fn=None,
     ):
         captured["compute_args"] = (
@@ -819,6 +832,7 @@ def test_compute_lst_point_means_emits_step_logs_and_passes_logger(monkeypatch, 
             spacing_m,
             output_path,
         )
+        captured["parallelism"] = parallelism
         captured["log_fn"] = log_fn
         return {"csv_path": output_path}
 
@@ -833,10 +847,12 @@ def test_compute_lst_point_means_emits_step_logs_and_passes_logger(monkeypatch, 
         "workspace/custom",
         1000,
         str(tmp_path / "out.csv"),
+        parallelism=5,
     )
 
     assert csv_path == str(tmp_path / "out.csv")
     assert captured["urls"] == ["url-1", "url-2"]
+    assert captured["parallelism"] == 5
     assert captured["log_fn"] is not None
     stdout = capsys.readouterr().out
     assert "[analyze] resolving HDF5 URLs area=京都府京都市 dataset=10002019 start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
@@ -844,7 +860,7 @@ def test_compute_lst_point_means_emits_step_logs_and_passes_logger(monkeypatch, 
     assert "[analyze] downloading 2 HDF5 file(s)" in stdout
     assert "[analyze] loading area polygon area=京都府京都市 prefecture=京都府" in stdout
     assert "[analyze] generating sampling points spacing=1000m" in stdout
-    assert "[analyze] starting point mean aggregation file_count=1" in stdout
+    assert "[analyze] starting point mean aggregation file_count=1 parallelism=5" in stdout
     assert "[analyze] wrote analysis artifacts csv_path=" in stdout
 
 
@@ -878,14 +894,30 @@ def test_compute_point_means_for_scenes_emits_scene_progress_logs(monkeypatch, t
         ["scene-a.h5", "scene-b.h5"],
         1000,
         str(tmp_path / "out.csv"),
+        parallelism=2,
     )
 
     assert summary["scene_count"] == 2
     assert summary["point_count"] == 2
     assert summary["valid_point_count"] == 2
     stdout = capsys.readouterr().out
-    assert "[analyze] aggregating point means area=京都府京都市 prefecture=京都府 point_count=2 scene_count=2 spacing=1000m" in stdout
+    assert "[analyze] aggregating point means area=京都府京都市 prefecture=京都府 point_count=2 scene_count=2 spacing=1000m parallelism=2" in stdout
     assert "[analyze] loading scene 1/2: scene-a.h5" in stdout
-    assert "[analyze] finished scene 1/2: valid_points=2 scene_count=1" in stdout
     assert "[analyze] loading scene 2/2: scene-b.h5" in stdout
+    assert "[analyze] finished scene 1/2: valid_points=2 scene_count=" in stdout
+    assert "[analyze] finished scene 2/2: valid_points=2 scene_count=" in stdout
     assert "[analyze] aggregation complete scene_count=2 valid_point_count=2 point_count=2" in stdout
+
+
+def test_compute_lst_point_means_rejects_invalid_parallelism(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="parallelism must be at least 1"):
+        compute_lst_point_means(
+            "京都府京都市",
+            datetime(2025, 7, 1),
+            datetime(2025, 8, 31),
+            "download/custom",
+            "workspace/custom",
+            1000,
+            str(tmp_path / "out.csv"),
+            parallelism=0,
+        )

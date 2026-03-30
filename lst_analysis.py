@@ -203,9 +203,12 @@ def compute_lst_point_means(
     spacing_m: int,
     output_path: str,
     dataset_id: str = GCOM_C_LST_DATASET_ID,
+    parallelism: int = 4,
     log_fn: Callable[[str], None] | None = None,
 ) -> str:
     log = log_fn or _log
+    if parallelism < 1:
+        raise ValueError("parallelism must be at least 1")
     log(
         f"[analyze] resolving HDF5 URLs area={area_name} dataset={dataset_id} "
         f"start={start.isoformat()} end={end.isoformat()}"
@@ -226,7 +229,7 @@ def compute_lst_point_means(
         (_repo_root() / output_path).resolve() if not Path(output_path).is_absolute() else Path(output_path)
     )
     log(f"[analyze] generating sampling points spacing={spacing_m}m")
-    log(f"[analyze] starting point mean aggregation file_count={len(hdf5_file_paths)}")
+    log(f"[analyze] starting point mean aggregation file_count={len(hdf5_file_paths)} parallelism={parallelism}")
     result = compute_point_means_for_scenes(
         area_name,
         prefecture_name,
@@ -234,6 +237,7 @@ def compute_lst_point_means(
         hdf5_file_paths,
         spacing_m,
         str(resolved_output_path),
+        parallelism=parallelism,
         log_fn=log,
     )
     log(f"[analyze] wrote analysis artifacts csv_path={result['csv_path']}")

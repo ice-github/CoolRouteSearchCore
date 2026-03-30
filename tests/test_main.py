@@ -87,6 +87,7 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
         spacing_m,
         output_path,
         dataset_id,
+        parallelism=4,
         log_fn=None,
     ):
         captured["area_name"] = area_name
@@ -97,7 +98,69 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
         captured["workspace_dir"] = workspace_dir
         captured["spacing_m"] = spacing_m
         captured["output_path"] = output_path
+        captured["parallelism"] = parallelism
         captured["log_fn"] = log_fn
+        return output_path
+
+    monkeypatch.setattr(main, "compute_lst_point_means", fake_compute_lst_point_means)
+
+    exit_code = main.main(
+        [
+            "analyze",
+            "--area-name",
+            "京都府京都市",
+            "--start",
+            "2025-07-01",
+            "--end",
+            "2025-08-31",
+            "--spacing-m",
+            "1000",
+            "--parallelism",
+            "6",
+            "--download-dir",
+            "download/custom",
+            "--workspace-dir",
+            "workspace/custom",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["area_name"] == "京都府京都市"
+    assert captured["start"] == datetime(2025, 7, 1)
+    assert captured["end"] == datetime(2025, 8, 31)
+    assert captured["dataset_id"] == main.GCOM_C_LST_DATASET_ID
+    assert captured["download_dir"] == "download/custom"
+    assert captured["workspace_dir"] == "workspace/custom"
+    assert captured["spacing_m"] == 1000
+    assert captured["parallelism"] == 6
+    assert captured["log_fn"] is main._log
+    assert captured["output_path"] == str(
+        repo_root / "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv"
+    )
+
+    stdout = capsys.readouterr().out
+    assert f"[analyze] area=京都府京都市 dataset={main.GCOM_C_LST_DATASET_ID} spacing=1000m parallelism=6 start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
+    assert f"[analyze] wrote csv_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv'}" in stdout
+    assert f"[analyze] wrote points_geojson_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_points.geojson'}" in stdout
+    assert f"[analyze] wrote summary_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_summary.json'}" in stdout
+
+
+def test_analyze_command_defaults_parallelism_to_four(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_compute_lst_point_means(
+        area_name,
+        start,
+        end,
+        download_dir,
+        workspace_dir,
+        spacing_m,
+        output_path,
+        dataset_id,
+        parallelism=4,
+        log_fn=None,
+    ):
+        captured["parallelism"] = parallelism
         return output_path
 
     monkeypatch.setattr(main, "compute_lst_point_means", fake_compute_lst_point_means)
@@ -121,20 +184,4 @@ def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -
     )
 
     assert exit_code == 0
-    assert captured["area_name"] == "京都府京都市"
-    assert captured["start"] == datetime(2025, 7, 1)
-    assert captured["end"] == datetime(2025, 8, 31)
-    assert captured["dataset_id"] == main.GCOM_C_LST_DATASET_ID
-    assert captured["download_dir"] == "download/custom"
-    assert captured["workspace_dir"] == "workspace/custom"
-    assert captured["spacing_m"] == 1000
-    assert captured["log_fn"] is main._log
-    assert captured["output_path"] == str(
-        repo_root / "workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv"
-    )
-
-    stdout = capsys.readouterr().out
-    assert f"[analyze] area=京都府京都市 dataset={main.GCOM_C_LST_DATASET_ID} spacing=1000m start=2025-07-01T00:00:00 end=2025-08-31T00:00:00" in stdout
-    assert f"[analyze] wrote csv_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m.csv'}" in stdout
-    assert f"[analyze] wrote points_geojson_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_points.geojson'}" in stdout
-    assert f"[analyze] wrote summary_path={repo_root / 'workspace/analysis/京都府京都市/lst_mean_local_京都府京都市_20250701_20250831_1000m_sampling_summary.json'}" in stdout
+    assert captured["parallelism"] == 4

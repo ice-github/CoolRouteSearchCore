@@ -67,11 +67,12 @@ def run_analysis(
     download_dir: str,
     workspace_dir: str,
     spacing_m: int,
+    parallelism: int = 4,
     dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> str:
     output_path = analysis_output_path(area_name, start, end, spacing_m)
     _log(
-        f"[analyze] area={area_name} dataset={dataset_id} spacing={spacing_m}m "
+        f"[analyze] area={area_name} dataset={dataset_id} spacing={spacing_m}m parallelism={parallelism} "
         f"start={start.isoformat()} end={end.isoformat()} "
         f"download_dir={download_dir} workspace_dir={workspace_dir} output_path={output_path}"
     )
@@ -84,6 +85,7 @@ def run_analysis(
         spacing_m,
         str(output_path),
         dataset_id,
+        parallelism=parallelism,
         log_fn=_log,
     )
     paths = analysis_output_paths_from_csv_path(csv_path)
@@ -125,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"CSW dataset ID. Defaults to the fixed GCOM-C LST ID {GCOM_C_LST_DATASET_ID}.",
     )
     analysis_parser.add_argument("--spacing-m", type=int, required=True, help="Sampling spacing in meters.")
+    analysis_parser.add_argument(
+        "--parallelism",
+        type=int,
+        default=4,
+        help="Number of scenes to process in parallel during aggregation. Defaults to 4.",
+    )
     analysis_parser.add_argument("--download-dir", required=True, help="Directory where downloaded files are written.")
     analysis_parser.add_argument("--workspace-dir", required=True, help="Workspace directory mounted into the container.")
 
@@ -158,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             args.download_dir,
             args.workspace_dir,
             args.spacing_m,
+            args.parallelism,
             args.dataset_id,
         )
         print(csv_path)

@@ -2,6 +2,7 @@ import json
 import math
 import os
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from collections.abc import Callable
 from pathlib import Path
@@ -86,6 +87,12 @@ class SceneRaster:
     width: int
     height: int
     footprint_metric: Polygon
+
+
+@dataclass(frozen=True)
+class ScenePointSample:
+    point_index: int
+    lst_c: float
 
 
 def ensure_parent(path_str: str) -> Path:
@@ -823,6 +830,7 @@ def build_sampling_surface_figure(
         template="plotly_white",
         margin=dict(l=0, r=0, t=50, b=0),
         scene=dict(
+            camera=sampling_surface_default_camera(),
             xaxis_title="Longitude",
             yaxis_title="Latitude",
             zaxis_title="LST (°C)",
@@ -850,13 +858,18 @@ def sampling_surface_topdown_camera() -> dict:
     }
 
 
+def sampling_surface_default_camera() -> dict:
+    return {
+        "eye": {"x": 1.7, "y": 1.7, "z": 0.95},
+        "up": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "projection": {"type": "perspective"},
+    }
+
+
 def sampling_surface_camera_presets() -> dict[str, dict]:
     return {
         "topdown": sampling_surface_topdown_camera(),
-        "iso": {
-            "eye": {"x": 1.7, "y": 1.7, "z": 0.95},
-            "up": {"x": 0, "y": 0, "z": 1},
-        },
+        "iso": sampling_surface_default_camera(),
         "low_north": {
             "eye": {"x": 0.0, "y": -2.2, "z": 0.55},
             "up": {"x": 0, "y": 0, "z": 1},
@@ -1133,24 +1146,27 @@ def compute_point_means_for_scenes(
     hdf5_file_paths: list[str],
     spacing_m: int,
     output_path: str,
+    parallelism: int = 4,
     log_fn: Callable[[str], None] | None = None,
 ) -> dict:
     log = log_fn or _log
+    if parallelism < 1:
+        raise ValueError("parallelism must be at least 1")
     points = generate_grid_points(metric_polygon, spacing_m)
     scene_count = 0
     total_scenes = len(hdf5_file_paths)
     log(
         f"[analyze] aggregating point means area={area_name} prefecture={prefecture_name} "
-        f"point_count={len(points)} scene_count={total_scenes} spacing={spacing_m}m"
+        f"point_count={len(points)} scene_count={total_scenes} spacing={spacing_m}m parallelism={parallelism}"
     )
 
-    for index, hdf5_path in enumerate(hdf5_file_paths, start=1):
+    def process_scene(index_and_path: tuple[int, str]) -> tuple[int, str, list[ScenePointSample]]:
+        index, hdf5_path = index_and_path
         log(f"[analyze] loading scene {index}/{total_scenes}: {hdf5_path}")
         lst_scene = load_scene(hdf5_path, "Image_data/LST")
         qa_scene = load_scene(hdf5_path, "Image_data/QA_flag")
-        scene_count += 1
-
-        for point in points:
+        samples: list[ScenePointSample] = []
+        for point_index, point in enumerate(points):
             sample = sample_scene(lst_scene, point.lon, point.lat)
             qa_sample = sample_scene(qa_scene, point.lon, point.lat)
             if sample is None or qa_sample is None:
@@ -1161,16 +1177,30 @@ def compute_point_means_for_scenes(
             if not is_valid_qa_value(qa_value):
                 continue
 
-            lst_c = lst_dn_to_celsius(lst_value, lst_scene)
-            point.sum_lst_c += lst_c
-            point.min_lst_c = lst_c if point.min_lst_c is None else min(point.min_lst_c, lst_c)
-            point.max_lst_c = lst_c if point.max_lst_c is None else max(point.max_lst_c, lst_c)
-            point.valid_count += 1
-        valid_points_so_far = sum(1 for point in points if point.valid_count > 0)
-        log(
-            f"[analyze] finished scene {index}/{total_scenes}: "
-            f"valid_points={valid_points_so_far} scene_count={scene_count}"
-        )
+            samples.append(ScenePointSample(point_index=point_index, lst_c=lst_dn_to_celsius(lst_value, lst_scene)))
+        return index, hdf5_path, samples
+
+    max_workers = min(parallelism, total_scenes) if total_scenes > 0 else 1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(process_scene, (index, hdf5_path))
+            for index, hdf5_path in enumerate(hdf5_file_paths, start=1)
+        ]
+        for future in as_completed(futures):
+            index, _, samples = future.result()
+            scene_count += 1
+            for sample in samples:
+                point = points[sample.point_index]
+                point.sum_lst_c += sample.lst_c
+                point.min_lst_c = sample.lst_c if point.min_lst_c is None else min(point.min_lst_c, sample.lst_c)
+                point.max_lst_c = sample.lst_c if point.max_lst_c is None else max(point.max_lst_c, sample.lst_c)
+                point.valid_count += 1
+
+            valid_points_so_far = sum(1 for point in points if point.valid_count > 0)
+            log(
+                f"[analyze] finished scene {index}/{total_scenes}: "
+                f"valid_points={valid_points_so_far} scene_count={scene_count}"
+            )
 
     output_path_obj = ensure_parent(output_path)
     with output_path_obj.open("w", encoding="utf-8") as handle:

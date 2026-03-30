@@ -24,10 +24,12 @@
 - Host-side orchestration lives in `gcom.py`.
 - Container-side browser automation lives in `playwright/download_gportal.py`.
 - Playwright and Chromium run in Docker only; do not rely on host-installed browser binaries for automation or screenshots.
+- When inspecting generated 3D-rendered HTML outputs, use Dockerized Playwright and Chromium rather than a host browser.
 - The host writes a temporary job file into `workspace/` and mounts it into the container.
 - Downloads are written into `download/`.
 - GitHub Actions workflows live in `.github/workflows/`.
 - For LST analysis visual checks, the human-facing comparison image must compare the 2D preview against the 3D sampling points rendered as sphere-like markers.
+- Confirm by human inspection that the 3D-rendered result looks reasonable by checking it against the corresponding 2D sampling result before accepting the output.
 - Do not use the 3D surface as the right-hand comparison image for that visual check.
 - When rendering that comparison from 3D to 2D, use a camera perpendicular to the XY plane with orthographic projection.
 - Render the final 3D surface output only after the point-cloud comparison passes.
@@ -46,3 +48,4 @@
 - Do not create or edit files outside this repository unless the user explicitly asks for it.
 - Before starting implementation work, create and use a dedicated worktree for the task.
 - When the prompt requirements are satisfied, sync the finished changes back to `main`.
+- After syncing changes to `main` and pushing, run `git pull` in the current repository so the checked-out workspace stays up to date.
