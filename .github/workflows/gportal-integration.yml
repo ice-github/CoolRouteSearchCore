@@ -39,11 +39,11 @@ jobs:
         if: steps.preflight.outputs.enabled == 'true'
         run: uv sync --group dev
 
-      - name: Run G-Portal integration test
+      - name: Run G-Portal integration tests
         if: steps.preflight.outputs.enabled == 'true'
         env:
           RUN_GPORTAL_INTEGRATION: "1"
-        run: uv run pytest tests/test_gportal_integration.py
+        run: uv run pytest -m integration
 
       - name: Report skipped integration run
         if: steps.preflight.outputs.enabled != 'true'

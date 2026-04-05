@@ -104,13 +104,15 @@ uv run python main.py analyze \
 
 ```bash
 uv run pytest
+RUN_GPORTAL_INTEGRATION=1 GPORTAL_USER=... GPORTAL_PASS=... uv run pytest -m integration
 uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py lst_analysis.py analysis scripts
 ```
 
 ## GitHub Actions
 
 GitHub Actions では `workflow_dispatch` の手動実行で実ダウンロード確認を行います。
-`tests/test_gportal_integration.py` は実際に G-Portal から 1 件ダウンロードし、ファイルが書き込まれることを確認します。
+integration テストは実際に G-Portal から 1 件ダウンロードし、その HDF5 を共有 fixture として使って検証します。
+ローカルで integration テストを流すときは `RUN_GPORTAL_INTEGRATION=1` と `GPORTAL_USER` / `GPORTAL_PASS` が必要です。
 workflow では `secrets` を job-level `if` で直接判定せず、step-level の preflight で確認します。credentials 未設定時は失敗ではなくスキップ扱いになります。
 
 GitHub Secrets:

@@ -43,10 +43,6 @@ from lst_analysis import (
     infer_prefecture_name,
 )
 
-
-SAMPLE_HDF5 = Path("/home/ubuntu/workspace/CoolRouteSearchCore/download/GC1SG1_20240101A01D_T0529_L2SG_LST_Q_3000.h5")
-
-
 def _looks_like_point_pixel(pixel: tuple[int, int, int]) -> bool:
     red, green, blue = pixel
     return blue > 180 and (blue - max(red, green)) > 40
@@ -151,8 +147,9 @@ def test_analysis_output_paths_from_csv_path_uses_common_stem() -> None:
     )
 
 
-def test_load_scene_reads_hdf5_metadata() -> None:
-    scene = load_scene(str(SAMPLE_HDF5), "Image_data/LST")
+@pytest.mark.integration
+def test_load_scene_reads_hdf5_metadata(downloaded_hdf5_path: Path) -> None:
+    scene = load_scene(str(downloaded_hdf5_path), "Image_data/LST")
 
     assert scene.width == 4800
     assert scene.height == 4800
@@ -161,8 +158,9 @@ def test_load_scene_reads_hdf5_metadata() -> None:
     assert scene.footprint_metric.bounds[0] < scene.footprint_metric.bounds[2]
 
 
-def test_sample_scene_returns_value_for_nagoya_point() -> None:
-    scene = load_scene(str(SAMPLE_HDF5), "Image_data/LST")
+@pytest.mark.integration
+def test_sample_scene_returns_value_for_nagoya_point(downloaded_hdf5_path: Path) -> None:
+    scene = load_scene(str(downloaded_hdf5_path), "Image_data/LST")
 
     sample = sample_scene(scene, 136.8855, 35.1077)
 
