@@ -22,10 +22,10 @@
 
 ## Automation Notes
 - Host-side orchestration lives in `gcom.py`.
-- Container-side browser automation lives in `playwright/download_gportal.py`.
+- Host-side Playwright client control also lives in `gcom.py`.
 - Playwright and Chromium run in Docker only; do not rely on host-installed browser binaries for automation or screenshots.
 - When inspecting generated 3D-rendered HTML outputs, use Dockerized Playwright and Chromium rather than a host browser.
-- The host writes a temporary job file into `workspace/` and mounts it into the container.
+- Docker is used to provide Playwright Server and bundled browser binaries while the Python control flow stays on the host `uv` environment.
 - Downloads are written into `download/`.
 - GitHub Actions workflows live in `.github/workflows/`.
 - For LST analysis visual checks, the human-facing comparison image must compare the 2D preview against the 3D sampling points rendered as sphere-like markers.

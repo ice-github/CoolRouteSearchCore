@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from gcom import CSWWrapper, GcomDownloader
+import gcom
+from gcom import CSWWrapper, GcomDownloader, _PlaywrightServer
 
 
 def test_split_intervals_chunks_by_day_window() -> None:
@@ -61,57 +62,184 @@ def test_get_filename_from_url_raises_for_invalid_url(tmp_path: Path) -> None:
         downloader._get_filename_from_url("https://example.com/")
 
 
-def test_create_job_file_contains_login_and_urls(tmp_path: Path) -> None:
+def test_build_playwright_server_command_uses_official_server_image(tmp_path: Path) -> None:
     downloader = GcomDownloader(str(tmp_path / "download"), str(tmp_path / "workspace"), "user", "pass")
 
-    job_file = downloader._create_job_file(["https://example.com/a.h5"])
-    try:
-        assert job_file.exists()
-        contents = job_file.read_text(encoding="utf-8")
-    finally:
-        if job_file.exists():
-            job_file.unlink()
+    command = downloader._build_playwright_server_command(3000, "gportal-playwright-test")
 
-    assert '"url": "https://gportal.jaxa.jp/gpr/auth?"' in contents
-    assert '"username_selector": "#auth_account"' in contents
-    assert '"download_dir": "/downloads"' in contents
-    assert '"urls": ["https://example.com/a.h5"]' in contents
+    assert command[:4] == ["docker", "run", "-d", "--rm"]
+    assert "--init" in command
+    assert "--ipc=host" in command
+    assert "--name" in command
+    assert "gportal-playwright-test" in command
+    assert f"mcr.microsoft.com/playwright:v{downloader._playwright_version}-noble" in command
+    assert f"npx -y playwright@{downloader._playwright_version} run-server --port 3000 --host 0.0.0.0" in command
 
 
-def test_run_playwright_download_builds_expected_docker_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_playwright_server_launches_container_and_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     downloader = GcomDownloader(str(tmp_path / "download"), str(tmp_path / "workspace"), "user", "pass")
-    job_file = tmp_path / "workspace" / "job.json"
-    job_file.parent.mkdir(parents=True, exist_ok=True)
-    job_file.write_text("{}", encoding="utf-8")
-
     captured: dict[str, object] = {}
 
-    def fake_run(command: list[str], cwd: Path, check: bool) -> object:
+    class FakeUuid:
+        hex = "abcdef1234567890"
+
+    def fake_run(command: list[str], cwd: Path, capture_output: bool, text: bool, check: bool) -> object:
         captured["command"] = command
         captured["cwd"] = cwd
+        captured["capture_output"] = capture_output
+        captured["text"] = text
         captured["check"] = check
 
         class Result:
             returncode = 0
+            stdout = "container-id\n"
+            stderr = ""
 
         return Result()
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    waited_for: dict[str, object] = {}
 
-    downloader._run_playwright_download(job_file)
+    monkeypatch.setattr(downloader, "_allocate_server_port", lambda: 4567)
+    monkeypatch.setattr(gcom.uuid, "uuid4", lambda: FakeUuid())
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(downloader, "_wait_for_playwright_server", lambda server: waited_for.setdefault("server", server))
+
+    server = downloader._start_playwright_server()
+
+    assert server == _PlaywrightServer("gportal-playwright-abcdef12", "ws://127.0.0.1:4567/")
+    assert waited_for["server"] == server
+    assert captured["cwd"] == downloader._repo_root
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
+    assert captured["check"] is False
 
     command = captured["command"]
     assert isinstance(command, list)
-    assert command[:3] == ["docker", "run", "--rm"]
-    assert f"GPORTAL_USER={downloader._username}" in command
-    assert f"GPORTAL_PASS={downloader._password}" in command
-    assert f"JOB_PATH=/jobs/{job_file.name}" in command
-    assert "bash" in command
-    assert "-lc" in command
-    assert "python3 -m pip install --quiet playwright==1.58.0 && python3 /work/playwright/download_gportal.py" in command
-    assert "mcr.microsoft.com/playwright/python:v1.58.0-noble" in command
-    assert captured["cwd"] == downloader._repo_root
-    assert captured["check"] is False
+    assert f"mcr.microsoft.com/playwright:v{downloader._playwright_version}-noble" in command
+    assert "gportal-playwright-abcdef12" in command
+
+
+def test_download_missing_urls_uses_host_playwright_client_and_saves_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    download_dir = tmp_path / "download"
+    workspace_dir = tmp_path / "workspace"
+    downloader = GcomDownloader(str(download_dir), str(workspace_dir), "user", "pass")
+    server = _PlaywrightServer("gportal-playwright-test", "ws://127.0.0.1:3000/")
+    stopped: list[_PlaywrightServer] = []
+
+    class FakeLocator:
+        def fill(self, value: str) -> None:
+            return None
+
+    class FakeDownload:
+        def save_as(self, path: str) -> None:
+            Path(path).write_text("downloaded", encoding="utf-8")
+
+    class FakeDownloadInfo:
+        value = FakeDownload()
+
+    class FakeExpectDownload:
+        def __enter__(self) -> FakeDownloadInfo:
+            return FakeDownloadInfo()
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePage:
+        def goto(self, url: str, wait_until: str | None = None) -> None:
+            return None
+
+        def locator(self, selector: str) -> FakeLocator:
+            return FakeLocator()
+
+        def evaluate(self, script: str, args: dict[str, str]) -> dict[str, int]:
+            return {"status": 1}
+
+        def wait_for_function(self, script: str, arg: str, timeout: int) -> None:
+            return None
+
+        def wait_for_load_state(self, state: str, timeout: int) -> None:
+            return None
+
+        def title(self) -> str:
+            return "G-PortalTop"
+
+        def expect_download(self, timeout: int) -> FakeExpectDownload:
+            return FakeExpectDownload()
+
+    class FakeContext:
+        def new_page(self) -> FakePage:
+            return FakePage()
+
+        def close(self) -> None:
+            return None
+
+    class FakeBrowser:
+        def new_context(self, accept_downloads: bool) -> FakeContext:
+            assert accept_downloads is True
+            return FakeContext()
+
+        def close(self) -> None:
+            return None
+
+    class FakeChromium:
+        def connect(self, ws_endpoint: str) -> FakeBrowser:
+            assert ws_endpoint == server.ws_endpoint
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakePlaywrightManager:
+        def __enter__(self) -> FakePlaywright:
+            return FakePlaywright()
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    monkeypatch.setattr(downloader, "_start_playwright_server", lambda: server)
+    monkeypatch.setattr(downloader, "_stop_playwright_server", lambda actual: stopped.append(actual))
+    monkeypatch.setattr(gcom, "sync_playwright", lambda: FakePlaywrightManager())
+
+    downloader._download_missing_urls(["https://example.com/files/result.h5"])
+
+    assert stopped == [server]
+    assert (download_dir / "result.h5").read_text(encoding="utf-8") == "downloaded"
+
+
+def test_download_missing_urls_wraps_error_and_stops_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    downloader = GcomDownloader(str(tmp_path / "download"), str(tmp_path / "workspace"), "user", "pass")
+    server = _PlaywrightServer("gportal-playwright-test", "ws://127.0.0.1:3000/")
+    stopped: list[_PlaywrightServer] = []
+
+    class FakeChromium:
+        def connect(self, ws_endpoint: str):
+            raise RuntimeError("boom")
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakePlaywrightManager:
+        def __enter__(self) -> FakePlaywright:
+            return FakePlaywright()
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    monkeypatch.setattr(downloader, "_start_playwright_server", lambda: server)
+    monkeypatch.setattr(downloader, "_stop_playwright_server", lambda actual: stopped.append(actual))
+    monkeypatch.setattr(downloader, "_docker_logs", lambda name: "server logs")
+    monkeypatch.setattr(gcom, "sync_playwright", lambda: FakePlaywrightManager())
+
+    with pytest.raises(RuntimeError, match="Playwright download failed during host-controlled browser automation: boom"):
+        downloader._download_missing_urls(["https://example.com/files/result.h5"])
+
+    assert stopped == [server]
 
 
 def test_get_downloaded_file_paths_logs_progress_and_skips_existing(
@@ -132,12 +260,11 @@ def test_get_downloaded_file_paths_logs_progress_and_skips_existing(
 
     monkeypatch.setattr(downloader, "_ensure_docker", lambda: None)
 
-    def fake_run_playwright_download(job_file: Path) -> None:
-        job = job_file.read_text(encoding="utf-8")
-        assert missing_url in job
+    def fake_download_missing_urls(urls: list[str]) -> None:
+        assert urls == [missing_url]
         (download_dir / "missing.h5").write_text("downloaded", encoding="utf-8")
 
-    monkeypatch.setattr(downloader, "_run_playwright_download", fake_run_playwright_download)
+    monkeypatch.setattr(downloader, "_download_missing_urls", fake_download_missing_urls)
 
     paths = downloader.get_downloaded_file_paths([existing_url, missing_url])
 

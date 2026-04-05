@@ -15,6 +15,8 @@ JAXA G-Portal の GCOM-C HDF5 を取得して、LST を解析するための最�
 uv sync --group dev
 ```
 
+このセットアップでは、Playwright の Python client は `uv` 環境に入り、ブラウザ本体はローカルにインストールしません。
+
 ## Quick Start
 
 `main.py` はサブコマンドで使います。GCOM-C LST の dataset ID は固定値 `10002019` なので、通常は指定不要です。
@@ -93,13 +95,16 @@ uv run python main.py analyze \
 - 取得済み HDF5 は既存の `download/` を再利用します。
 - 行政区域ポリゴンは MLIT の `KsjTmplt-N03-2025` から取得します。
 - HDF5 は `Image_data/LST` と `Image_data/QA_flag` を `rasterio` で直接開き、GCOM-C の等面積投影上でサンプル点評価します。
-- ダウンロードは prefecture 名を `get_prefecture_bbox()` に渡し、CSW で対象 HDF5 の URL を取得して、未取得ファイルのみを Docker 上の Playwright で取得します。
+- ダウンロードは prefecture 名を `get_prefecture_bbox()` に渡し、CSW で対象 HDF5 の URL を取得して、未取得ファイルのみを取得します。
+- `uv run python main.py ...` はホスト側の Playwright Python client でログインとダウンロード制御を行います。
+- Docker は Playwright Server と Chromium を提供するためだけに使います。ブラウザ本体をローカル環境へ入れたくないためです。
+- `download` と `analyze` は同じ `GcomDownloader` 実装を使い、ブラウザ自動化経路も共通です。
 
 ## Tests
 
 ```bash
 uv run pytest
-uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py lst_analysis.py analysis scripts playwright
+uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py lst_analysis.py analysis scripts
 ```
 
 ## GitHub Actions

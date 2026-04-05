@@ -32,7 +32,7 @@ find workspace -type f \( -name '*.html' -o -name '*.png' \) -printf '%TY-%Tm-%T
 
 ## Render the HTML in Docker Chromium
 
-Use the Playwright Docker image already used by this repository. If Playwright Python is unavailable in the container, use the Chromium binary bundled in that image directly.
+Use the Playwright Docker image already used by this repository. The repo now uses the host-side Playwright Python client, so for visual checks in Docker use the Chromium binary bundled in that image directly.
 
 Recommended command pattern:
 
@@ -40,7 +40,7 @@ Recommended command pattern:
 docker run --rm \
   -v /home/ubuntu/workspace/CoolRouteSearchCore:/work \
   -w /work \
-  mcr.microsoft.com/playwright/python:v1.58.0-noble \
+  mcr.microsoft.com/playwright:v1.58.0-noble \
   bash -lc '"/ms-playwright/chromium-1208/chrome-linux64/chrome" \
     --headless \
     --no-sandbox \

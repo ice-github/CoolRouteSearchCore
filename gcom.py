@@ -1,12 +1,17 @@
-import json
 import os
+import socket
 import subprocess
-import tempfile
+import time
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 import requests
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 
 def _log(message: str) -> None:
@@ -101,9 +106,17 @@ class JPortalLogin:
         self.success_title = "G-PortalTop"
 
 
+@dataclass(frozen=True)
+class _PlaywrightServer:
+    container_name: str
+    ws_endpoint: str
+
+
 class GcomDownloader:
-    # Keep this aligned with the Playwright Python package the container runs.
-    _image_name = "mcr.microsoft.com/playwright/python:v1.58.0-noble"
+    # Keep the client package and Docker image on the same Playwright release.
+    _playwright_version = "1.58.0"
+    _image_name = f"mcr.microsoft.com/playwright:v{_playwright_version}-noble"
+    _server_start_timeout_seconds = 30.0
 
     def __init__(self, download_dir: str, workspace_dir: str, username: str, password: str) -> None:
         self._repo_root = Path(__file__).resolve().parent
@@ -137,57 +150,179 @@ class GcomDownloader:
             raise ValueError(f"could not determine filename from url: {url}")
         return filename
 
-    def _create_job_file(self, urls: list[str]) -> Path:
-        payload = {
-            "login": {
-                "url": self._login.login_url,
-                "username_selector": self._login.username_selector,
-                "password_selector": self._login.password_selector,
-                "submit_selector": self._login.submit_selector,
-                "success_title": self._login.success_title,
-            },
-            "download_dir": "/downloads",
-            "urls": urls,
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            suffix=".json",
-            prefix="gportal_job_",
-            dir=self._workspace_dir,
-            delete=False,
-        ) as handle:
-            json.dump(payload, handle)
-            _log(f"[download] wrote job file {handle.name} for {len(urls)} URL(s)")
-            return Path(handle.name)
+    def _allocate_server_port(self) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
+            handle.bind(("127.0.0.1", 0))
+            return int(handle.getsockname()[1])
 
-    def _run_playwright_download(self, job_file: Path) -> None:
-        _log(f"[download] starting Playwright container for job file {job_file.name}")
-        command = [
+    def _build_playwright_server_command(self, port: int, container_name: str) -> list[str]:
+        return [
             "docker",
             "run",
+            "-d",
             "--rm",
-            "-e",
-            f"GPORTAL_USER={self._username}",
-            "-e",
-            f"GPORTAL_PASS={self._password}",
-            "-e",
-            f"JOB_PATH=/jobs/{job_file.name}",
-            "-v",
-            f"{self._download_dir.resolve()}:/downloads",
-            "-v",
-            f"{self._workspace_dir.resolve()}:/jobs",
-            "-v",
-            f"{(self._repo_root / 'playwright').resolve()}:/work/playwright:ro",
+            "--init",
+            "--ipc=host",
+            "--name",
+            container_name,
+            "-p",
+            f"{port}:{port}",
+            "--workdir",
+            "/home/pwuser",
+            "--user",
+            "pwuser",
             self._image_name,
-            "bash",
-            "-lc",
-            "python3 -m pip install --quiet playwright==1.58.0 && python3 /work/playwright/download_gportal.py",
+            "/bin/sh",
+            "-c",
+            f"npx -y playwright@{self._playwright_version} run-server --port {port} --host 0.0.0.0",
         ]
-        result = subprocess.run(command, cwd=self._repo_root, check=False)
+
+    def _docker_logs(self, container_name: str) -> str:
+        result = subprocess.run(
+            ["docker", "logs", container_name],
+            cwd=self._repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        return output.strip()
+
+    def _stop_playwright_server(self, server: _PlaywrightServer) -> None:
+        _log(f"[download] stopping Playwright server container {server.container_name}")
+        subprocess.run(
+            ["docker", "rm", "-f", server.container_name],
+            cwd=self._repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _wait_for_playwright_server(self, server: _PlaywrightServer) -> None:
+        deadline = time.monotonic() + self._server_start_timeout_seconds
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.connect(server.ws_endpoint)
+                    browser.close()
+                _log(f"[download] Playwright server is ready at {server.ws_endpoint}")
+                return
+            except PlaywrightError as error:
+                last_error = error
+                time.sleep(0.5)
+
+        logs = self._docker_logs(server.container_name)
+        message = f"Playwright server did not become ready at {server.ws_endpoint}"
+        if logs:
+            message = f"{message}\n[docker logs]\n{logs}"
+        raise RuntimeError(message) from last_error
+
+    def _start_playwright_server(self) -> _PlaywrightServer:
+        port = self._allocate_server_port()
+        container_name = f"gportal-playwright-{uuid.uuid4().hex[:8]}"
+        _log(
+            f"[download] starting Playwright server container {container_name} "
+            f"from {self._image_name} on port {port}"
+        )
+        result = subprocess.run(
+            self._build_playwright_server_command(port, container_name),
+            cwd=self._repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if result.returncode != 0:
-            raise RuntimeError("Playwright download container failed")
-        _log("[download] Playwright container finished successfully")
+            stderr = result.stderr.strip()
+            raise RuntimeError(
+                f"Failed to start Playwright server container {container_name}: {stderr or 'unknown docker error'}"
+            )
+        server = _PlaywrightServer(container_name=container_name, ws_endpoint=f"ws://127.0.0.1:{port}/")
+        self._wait_for_playwright_server(server)
+        return server
+
+    def _login_to_gportal(self, page) -> None:
+        _log("[download] opening G-Portal login page")
+        page.goto(self._login.login_url, wait_until="domcontentloaded")
+        page.locator(self._login.username_selector).fill(self._username)
+        page.locator(self._login.password_selector).fill(self._password)
+
+        _log("[download] submitting G-Portal credentials")
+        auth_result = page.evaluate(
+            """async ({user, password}) => {
+                const response = await fetch('/gpr/auth/authenticate.json', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+                    body: new URLSearchParams({
+                        account: user,
+                        password,
+                        fuel_csrf_token: window.fuel_csrf_token(),
+                    }),
+                    credentials: 'same-origin',
+                });
+                return await response.json();
+            }""",
+            {"user": self._username, "password": self._password},
+        )
+        if auth_result.get("status") != 1:
+            raise RuntimeError(f"G-Portal login failed: {auth_result}")
+
+        _log("[download] waiting for authenticated G-Portal session")
+        page.goto("https://gportal.jaxa.jp/gpr/index", wait_until="domcontentloaded")
+        try:
+            page.wait_for_function(
+                """expectedTitle => document.title === expectedTitle""",
+                arg=self._login.success_title,
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            page.wait_for_load_state("networkidle", timeout=15000)
+            if page.title() != self._login.success_title:
+                raise RuntimeError(f"G-Portal login failed after auth: current title is {page.title()!r}")
+        _log("[download] G-Portal login complete")
+
+    def _download_missing_urls(self, urls: list[str]) -> None:
+        server = self._start_playwright_server()
+        try:
+            _log(f"[download] connecting Playwright client to {server.ws_endpoint}")
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.connect(server.ws_endpoint)
+                context = browser.new_context(accept_downloads=True)
+                page = context.new_page()
+                try:
+                    self._login_to_gportal(page)
+                    total = len(urls)
+                    for index, url in enumerate(urls, start=1):
+                        target_path = self._download_dir / self._get_filename_from_url(url)
+                        if target_path.exists():
+                            _log(f"[download] skip existing {index}/{total}: {target_path}")
+                            continue
+
+                        _log(f"[download] downloading {index}/{total}: {url}")
+                        try:
+                            with page.expect_download(timeout=120000) as download_info:
+                                try:
+                                    page.goto(url, wait_until="commit")
+                                except PlaywrightError as error:
+                                    if "Download is starting" not in str(error):
+                                        raise
+                        except Exception as error:
+                            raise RuntimeError(f"failed to start download for {url}") from error
+
+                        download = download_info.value
+                        download.save_as(str(target_path))
+                        _log(f"[download] saved {index}/{total}: {target_path}")
+                finally:
+                    context.close()
+                    browser.close()
+        except Exception as error:
+            logs = self._docker_logs(server.container_name)
+            message = f"Playwright download failed during host-controlled browser automation: {error}"
+            if logs:
+                message = f"{message}\n[docker logs]\n{logs}"
+            raise RuntimeError(message) from error
+        finally:
+            self._stop_playwright_server(server)
 
     def get_downloaded_file_paths(self, urls: list[str]) -> list[str]:
         self._require_credentials()
@@ -211,13 +346,7 @@ class GcomDownloader:
             return resolved_paths
 
         _log(f"[download] downloading {len(missing_urls)} missing file(s)")
-        job_file = self._create_job_file(missing_urls)
-        try:
-            self._run_playwright_download(job_file)
-        finally:
-            if job_file.exists():
-                job_file.unlink()
-                _log(f"[download] removed job file {job_file.name}")
+        self._download_missing_urls(missing_urls)
 
         for path in resolved_paths:
             if not os.path.exists(path):
