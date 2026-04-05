@@ -37,12 +37,13 @@ uv sync --group dev
 uv run python main.py download \
   --prefecture 愛知県 \
   --start 2025-07-01 \
-  --end 2025-08-31 \
+  --end 2025-09-01 \
   --limit 1
 ```
 
 `--limit` は日ごとや月ごとの件数ではなく、`--start` から `--end` までの検索期間全体で見つかった HDF5 の最大件数です。
-上の例では、`2025-07-01` から `2025-08-31` までの検索結果全体から最大 1 ファイルだけをダウンロードします。
+`--end` はその日を含まない終端です。8 月 31 日まで含めたい場合は `2025-09-01` を指定します。
+上の例では、`2025-07-01` から `2025-08-31` までを含む検索結果全体から最大 1 ファイルだけをダウンロードします。
 全件ダウンロードしたい場合は `--limit 0` を使うか、`--limit` を省略します。
 
 `download` の既定値:
@@ -57,7 +58,7 @@ uv run python main.py download \
 uv run python main.py analyze \
   --area-name 愛知県名古屋市 \
   --start 2025-07-01 \
-  --end 2025-08-31 \
+  --end 2025-09-01 \
   --spacing-m 1000 \
   --parallelism 4
 ```
@@ -74,7 +75,7 @@ uv run python main.py analyze \
 uv run python main.py analyze \
   --area-name 京都府京都市 \
   --start 2025-07-01 \
-  --end 2025-08-31 \
+  --end 2025-09-01 \
   --spacing-m 1000 \
   --parallelism 4
 ```
