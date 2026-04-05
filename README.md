@@ -38,10 +38,18 @@ uv run python main.py download \
   --prefecture 愛知県 \
   --start 2025-07-01 \
   --end 2025-08-31 \
-  --limit 1 \
-  --download-dir download \
-  --workspace-dir workspace
+  --limit 1
 ```
+
+`--limit` は日ごとや月ごとの件数ではなく、`--start` から `--end` までの検索期間全体で見つかった HDF5 の最大件数です。
+上の例では、`2025-07-01` から `2025-08-31` までの検索結果全体から最大 1 ファイルだけをダウンロードします。
+全件ダウンロードしたい場合は `--limit 0` を使うか、`--limit` を省略します。
+
+`download` の既定値:
+
+- `--limit 0`
+- `--download-dir download`
+- `--workspace-dir workspace`
 
 ### Analyze
 
@@ -51,10 +59,14 @@ uv run python main.py analyze \
   --start 2025-07-01 \
   --end 2025-08-31 \
   --spacing-m 1000 \
-  --parallelism 4 \
-  --download-dir download \
-  --workspace-dir workspace
+  --parallelism 4
 ```
+
+`analyze` の既定値:
+
+- `--download-dir download`
+- `--workspace-dir workspace`
+- `--parallelism 4`
 
 京都市でも同じ要領で実行できます。
 
@@ -64,9 +76,7 @@ uv run python main.py analyze \
   --start 2025-07-01 \
   --end 2025-08-31 \
   --spacing-m 1000 \
-  --parallelism 4 \
-  --download-dir download \
-  --workspace-dir workspace
+  --parallelism 4
 ```
 
 ## Outputs
@@ -90,7 +100,7 @@ uv run python main.py analyze \
 - `sampling_compare_*.png` は 2D preview と 3D topdown を左右に並べた比較画像です。
 - `dataset-id` は GCOM-C LST 用の固定値 `10002019` を使います。
 - `--parallelism` は scene 集計の並列度です。省略時は `4` です。
-- `--download-dir` と `--workspace-dir` は用途ごとに分けられます。
+- `--download-dir` と `--workspace-dir` は省略時にそれぞれ `download` と `workspace` を使います。必要なら用途ごとに分けられます。
 
 ## LST Analysis API
 

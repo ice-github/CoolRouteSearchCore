@@ -74,6 +74,58 @@ def test_download_command_uses_prefecture_keyword_and_limit(monkeypatch, capsys)
     assert "[download] wrote 2 file(s)" in stdout
 
 
+def test_download_command_defaults_limit_and_paths(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class DummyCswWrapper:
+        def get_hdf5_urls(self, dataset_id, utc_start, utc_end, bbox):
+            captured["dataset_id"] = dataset_id
+            captured["utc_start"] = utc_start
+            captured["utc_end"] = utc_end
+            captured["bbox"] = bbox
+            return ["url-1", "url-2", "url-3"]
+
+    class DummyDownloader:
+        def __init__(self, download_dir, workspace_dir, username, password):
+            captured["download_dir"] = download_dir
+            captured["workspace_dir"] = workspace_dir
+            captured["username"] = username
+            captured["password"] = password
+
+        def get_downloaded_file_paths(self, urls):
+            captured["urls"] = urls
+            return [f"/tmp/file-{index}.h5" for index, _ in enumerate(urls, start=1)]
+
+    monkeypatch.setattr(main, "CSWWrapper", DummyCswWrapper)
+    monkeypatch.setattr(main, "GcomDownloader", DummyDownloader)
+    monkeypatch.setattr(main, "get_prefecture_bbox", lambda keyword: [1, 2, 3, 4])
+    monkeypatch.setenv("GPORTAL_USER", "demo-user")
+    monkeypatch.setenv("GPORTAL_PASS", "demo-pass")
+
+    exit_code = main.main(
+        [
+            "download",
+            "--prefecture",
+            "愛知県",
+            "--start",
+            "2025-07-01",
+            "--end",
+            "2025-08-31",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["dataset_id"] == main.GCOM_C_LST_DATASET_ID
+    assert captured["utc_start"] == datetime(2025, 7, 1)
+    assert captured["utc_end"] == datetime(2025, 8, 31)
+    assert captured["bbox"] == [1, 2, 3, 4]
+    assert captured["urls"] == ["url-1", "url-2", "url-3"]
+    assert captured["download_dir"] == main.DEFAULT_DOWNLOAD_DIR
+    assert captured["workspace_dir"] == main.DEFAULT_WORKSPACE_DIR
+    assert captured["username"] == "demo-user"
+    assert captured["password"] == "demo-pass"
+
+
 def test_analyze_command_uses_area_name_spacing_and_dates(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}
     repo_root = Path(main.__file__).resolve().parent
@@ -161,6 +213,8 @@ def test_analyze_command_defaults_parallelism_to_four(monkeypatch) -> None:
         log_fn=None,
     ):
         captured["parallelism"] = parallelism
+        captured["download_dir"] = download_dir
+        captured["workspace_dir"] = workspace_dir
         return output_path
 
     monkeypatch.setattr(main, "compute_lst_point_means", fake_compute_lst_point_means)
@@ -176,12 +230,10 @@ def test_analyze_command_defaults_parallelism_to_four(monkeypatch) -> None:
             "2025-08-31",
             "--spacing-m",
             "1000",
-            "--download-dir",
-            "download/custom",
-            "--workspace-dir",
-            "workspace/custom",
         ]
     )
 
     assert exit_code == 0
     assert captured["parallelism"] == 4
+    assert captured["download_dir"] == main.DEFAULT_DOWNLOAD_DIR
+    assert captured["workspace_dir"] == main.DEFAULT_WORKSPACE_DIR

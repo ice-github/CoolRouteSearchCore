@@ -10,6 +10,10 @@ from prefecture_bbox import get_prefecture_bbox
 GCOM_C_LST_DATASET_ID = "10002019"
 # This repo's examples target the GCOM-C LST product on G-Portal, so the
 # dataset ID is fixed here unless the upstream catalog ID changes.
+DEFAULT_DOWNLOAD_LIMIT = 0
+DEFAULT_DOWNLOAD_DIR = "download"
+DEFAULT_WORKSPACE_DIR = "workspace"
+DEFAULT_ANALYZE_PARALLELISM = 4
 
 
 def gportal_username_and_password_from_env() -> tuple[str | None, str | None]:
@@ -67,7 +71,7 @@ def run_analysis(
     download_dir: str,
     workspace_dir: str,
     spacing_m: int,
-    parallelism: int = 4,
+    parallelism: int = DEFAULT_ANALYZE_PARALLELISM,
     dataset_id: str = GCOM_C_LST_DATASET_ID,
 ) -> str:
     output_path = analysis_output_path(area_name, start, end, spacing_m)
@@ -113,9 +117,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     download_parser.add_argument("--start", type=_parse_datetime, required=True, help="UTC start datetime in ISO format.")
     download_parser.add_argument("--end", type=_parse_datetime, required=True, help="UTC end datetime in ISO format.")
-    download_parser.add_argument("--limit", type=int, required=True, help="Maximum number of URLs to download. Use 0 for all.")
-    download_parser.add_argument("--download-dir", required=True, help="Directory where downloaded files are written.")
-    download_parser.add_argument("--workspace-dir", required=True, help="Workspace directory mounted into the container.")
+    download_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_DOWNLOAD_LIMIT,
+        help=(
+            "Maximum number of matched HDF5 URLs to download across the entire start/end window. "
+            "Use 0 for all. Defaults to 0."
+        ),
+    )
+    download_parser.add_argument(
+        "--download-dir",
+        default=DEFAULT_DOWNLOAD_DIR,
+        help=f"Directory where downloaded files are written. Defaults to {DEFAULT_DOWNLOAD_DIR}.",
+    )
+    download_parser.add_argument(
+        "--workspace-dir",
+        default=DEFAULT_WORKSPACE_DIR,
+        help=f"Workspace directory mounted into the container. Defaults to {DEFAULT_WORKSPACE_DIR}.",
+    )
 
     analysis_parser = subparsers.add_parser("analyze", help="Run LST analysis for an area.")
     analysis_parser.add_argument("--area-name", required=True, help="Administrative area name such as 愛知県名古屋市.")
@@ -130,11 +150,19 @@ def build_parser() -> argparse.ArgumentParser:
     analysis_parser.add_argument(
         "--parallelism",
         type=int,
-        default=4,
-        help="Number of scenes to process in parallel during aggregation. Defaults to 4.",
+        default=DEFAULT_ANALYZE_PARALLELISM,
+        help=f"Number of scenes to process in parallel during aggregation. Defaults to {DEFAULT_ANALYZE_PARALLELISM}.",
     )
-    analysis_parser.add_argument("--download-dir", required=True, help="Directory where downloaded files are written.")
-    analysis_parser.add_argument("--workspace-dir", required=True, help="Workspace directory mounted into the container.")
+    analysis_parser.add_argument(
+        "--download-dir",
+        default=DEFAULT_DOWNLOAD_DIR,
+        help=f"Directory where downloaded files are written. Defaults to {DEFAULT_DOWNLOAD_DIR}.",
+    )
+    analysis_parser.add_argument(
+        "--workspace-dir",
+        default=DEFAULT_WORKSPACE_DIR,
+        help=f"Workspace directory mounted into the container. Defaults to {DEFAULT_WORKSPACE_DIR}.",
+    )
 
     return parser
 
