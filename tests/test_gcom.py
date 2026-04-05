@@ -62,7 +62,65 @@ def test_get_filename_from_url_raises_for_invalid_url(tmp_path: Path) -> None:
         downloader._get_filename_from_url("https://example.com/")
 
 
-def test_build_playwright_server_command_uses_official_server_image(tmp_path: Path) -> None:
+def test_build_playwright_server_image_command_uses_public_base_image(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "docker" / "playwright-server").mkdir(parents=True, exist_ok=True)
+
+    command = GcomDownloader._build_playwright_server_image_command(repo_root)
+
+    assert command[:3] == ["docker", "build", "--pull"]
+    assert "--build-arg" in command
+    assert f"PLAYWRIGHT_BASE_IMAGE={GcomDownloader._playwright_base_image}" in command
+    assert f"PLAYWRIGHT_VERSION={GcomDownloader._playwright_version}" in command
+    assert GcomDownloader._server_image_name in command
+    assert str(repo_root / "docker" / "playwright-server" / "Dockerfile") in command
+    assert str(repo_root / "docker" / "playwright-server") in command
+
+
+def test_build_playwright_server_image_raises_clear_error_for_public_pull_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+
+    def fake_run(command: list[str], cwd: Path, capture_output: bool, text: bool, check: bool) -> object:
+        class Result:
+            returncode = 1
+            stdout = ""
+            stderr = (
+                f'failed to resolve reference "{GcomDownloader._playwright_base_image}": '
+                "dial tcp: lookup mcr.microsoft.com: i/o timeout"
+            )
+
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="Failed to pull public Playwright base image"):
+        GcomDownloader.build_playwright_server_image(repo_root)
+
+
+def test_build_playwright_server_image_raises_clear_error_for_build_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+
+    def fake_run(command: list[str], cwd: Path, capture_output: bool, text: bool, check: bool) -> object:
+        class Result:
+            returncode = 1
+            stdout = "Step 2/2 : RUN npm install -g playwright@1.58.0"
+            stderr = "npm ERR! code ETARGET"
+
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="Failed to build Playwright server image"):
+        GcomDownloader.build_playwright_server_image(repo_root)
+
+
+def test_build_playwright_server_command_uses_built_server_image(tmp_path: Path) -> None:
     downloader = GcomDownloader(str(tmp_path / "download"), str(tmp_path / "workspace"), "user", "pass")
 
     command = downloader._build_playwright_server_command(3000, "gportal-playwright-test")
@@ -72,8 +130,8 @@ def test_build_playwright_server_command_uses_official_server_image(tmp_path: Pa
     assert "--ipc=host" in command
     assert "--name" in command
     assert "gportal-playwright-test" in command
-    assert f"mcr.microsoft.com/playwright:v{downloader._playwright_version}-noble" in command
-    assert f"npx -y playwright@{downloader._playwright_version} run-server --port 3000 --host 0.0.0.0" in command
+    assert GcomDownloader._server_image_name in command
+    assert command[-6:] == ["playwright", "run-server", "--port", "3000", "--host", "0.0.0.0"]
 
 
 def test_start_playwright_server_launches_container_and_waits(
@@ -104,12 +162,14 @@ def test_start_playwright_server_launches_container_and_waits(
     monkeypatch.setattr(downloader, "_allocate_server_port", lambda: 4567)
     monkeypatch.setattr(gcom.uuid, "uuid4", lambda: FakeUuid())
     monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(downloader, "_ensure_playwright_server_image", lambda: captured.setdefault("built", True))
     monkeypatch.setattr(downloader, "_wait_for_playwright_server", lambda server: waited_for.setdefault("server", server))
 
     server = downloader._start_playwright_server()
 
     assert server == _PlaywrightServer("gportal-playwright-abcdef12", "ws://127.0.0.1:4567/")
     assert waited_for["server"] == server
+    assert captured["built"] is True
     assert captured["cwd"] == downloader._repo_root
     assert captured["capture_output"] is True
     assert captured["text"] is True
@@ -117,7 +177,7 @@ def test_start_playwright_server_launches_container_and_waits(
 
     command = captured["command"]
     assert isinstance(command, list)
-    assert f"mcr.microsoft.com/playwright:v{downloader._playwright_version}-noble" in command
+    assert GcomDownloader._server_image_name in command
     assert "gportal-playwright-abcdef12" in command
 
 

@@ -113,9 +113,10 @@ class _PlaywrightServer:
 
 
 class GcomDownloader:
-    # Keep the client package and Docker image on the same Playwright release.
+    # Keep the host client package, server image, and Docker base image aligned.
     _playwright_version = "1.58.0"
-    _image_name = f"mcr.microsoft.com/playwright:v{_playwright_version}-noble"
+    _playwright_base_image = f"mcr.microsoft.com/playwright:v{_playwright_version}-noble"
+    _server_image_name = f"coolroutesearchcore-playwright-server:v{_playwright_version}"
     _server_start_timeout_seconds = 30.0
 
     def __init__(self, download_dir: str, workspace_dir: str, username: str, password: str) -> None:
@@ -155,6 +156,69 @@ class GcomDownloader:
             handle.bind(("127.0.0.1", 0))
             return int(handle.getsockname()[1])
 
+    @classmethod
+    def _server_dockerfile_path(cls, repo_root: Path) -> Path:
+        return repo_root / "docker" / "playwright-server" / "Dockerfile"
+
+    @classmethod
+    def _server_build_context_path(cls, repo_root: Path) -> Path:
+        return repo_root / "docker" / "playwright-server"
+
+    @classmethod
+    def _build_playwright_server_image_command(cls, repo_root: Path) -> list[str]:
+        return [
+            "docker",
+            "build",
+            "--pull",
+            "--build-arg",
+            f"PLAYWRIGHT_BASE_IMAGE={cls._playwright_base_image}",
+            "--build-arg",
+            f"PLAYWRIGHT_VERSION={cls._playwright_version}",
+            "-t",
+            cls._server_image_name,
+            "-f",
+            str(cls._server_dockerfile_path(repo_root)),
+            str(cls._server_build_context_path(repo_root)),
+        ]
+
+    @classmethod
+    def build_playwright_server_image(cls, repo_root: Path | None = None) -> None:
+        resolved_repo_root = repo_root or Path(__file__).resolve().parent
+        _log(
+            f"[download] building Playwright server image {cls._server_image_name} "
+            f"from public base {cls._playwright_base_image}"
+        )
+        result = subprocess.run(
+            cls._build_playwright_server_image_command(resolved_repo_root),
+            cwd=resolved_repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            _log(f"[download] Playwright server image {cls._server_image_name} is ready")
+            return
+
+        combined_output = "\n".join(part for part in [result.stdout.strip(), result.stderr.strip()] if part).strip()
+        if (
+            cls._playwright_base_image in combined_output
+            and (
+                "failed to resolve reference" in combined_output
+                or "failed to resolve source metadata" in combined_output
+                or "load metadata for" in combined_output
+            )
+        ):
+            raise RuntimeError(
+                f"Failed to pull public Playwright base image {cls._playwright_base_image}: {combined_output}"
+            )
+        raise RuntimeError(
+            f"Failed to build Playwright server image {cls._server_image_name}: "
+            f"{combined_output or 'unknown docker build error'}"
+        )
+
+    def _ensure_playwright_server_image(self) -> None:
+        self.build_playwright_server_image(self._repo_root)
+
     def _build_playwright_server_command(self, port: int, container_name: str) -> list[str]:
         return [
             "docker",
@@ -171,10 +235,13 @@ class GcomDownloader:
             "/home/pwuser",
             "--user",
             "pwuser",
-            self._image_name,
-            "/bin/sh",
-            "-c",
-            f"npx -y playwright@{self._playwright_version} run-server --port {port} --host 0.0.0.0",
+            self._server_image_name,
+            "playwright",
+            "run-server",
+            "--port",
+            str(port),
+            "--host",
+            "0.0.0.0",
         ]
 
     def _docker_logs(self, container_name: str) -> str:
@@ -219,11 +286,12 @@ class GcomDownloader:
         raise RuntimeError(message) from last_error
 
     def _start_playwright_server(self) -> _PlaywrightServer:
+        self._ensure_playwright_server_image()
         port = self._allocate_server_port()
         container_name = f"gportal-playwright-{uuid.uuid4().hex[:8]}"
         _log(
             f"[download] starting Playwright server container {container_name} "
-            f"from {self._image_name} on port {port}"
+            f"from {self._server_image_name} on port {port}"
         )
         result = subprocess.run(
             self._build_playwright_server_command(port, container_name),
@@ -235,10 +303,14 @@ class GcomDownloader:
         if result.returncode != 0:
             stderr = result.stderr.strip()
             raise RuntimeError(
-                f"Failed to start Playwright server container {container_name}: {stderr or 'unknown docker error'}"
+                f"Failed to start Playwright server container {container_name}: {stderr or 'unknown docker run error'}"
             )
         server = _PlaywrightServer(container_name=container_name, ws_endpoint=f"ws://127.0.0.1:{port}/")
-        self._wait_for_playwright_server(server)
+        try:
+            self._wait_for_playwright_server(server)
+        except Exception:
+            self._stop_playwright_server(server)
+            raise
         return server
 
     def _login_to_gportal(self, page) -> None:

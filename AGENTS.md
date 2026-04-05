@@ -26,6 +26,7 @@
 - Playwright and Chromium run in Docker only; do not rely on host-installed browser binaries for automation or screenshots.
 - When inspecting generated 3D-rendered HTML outputs, use Dockerized Playwright and Chromium rather than a host browser.
 - Docker is used to provide Playwright Server and bundled browser binaries while the Python control flow stays on the host `uv` environment.
+- Build the repo-managed Playwright server image from the official public Playwright base image; do not rely on ad-hoc local custom images.
 - Downloads are written into `download/`.
 - GitHub Actions workflows live in `.github/workflows/`.
 - For LST analysis visual checks, the human-facing comparison image must compare the 2D preview against the 3D sampling points rendered as sphere-like markers.

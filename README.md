@@ -17,6 +17,15 @@ uv sync --group dev
 
 このセットアップでは、Playwright の Python client は `uv` 環境に入り、ブラウザ本体はローカルにインストールしません。
 
+## Playwright Layout
+
+- Host 側は `uv add playwright` 相当の Python client を使います。
+- Docker 側は public な `mcr.microsoft.com/playwright:v1.58.0-noble` をベースにした server image を build して使います。
+- `uv` で入るのは host Python client だけなので、Docker 内で `playwright run-server` を起動するには server image 側にも Playwright package が必要です。
+- official の `mcr.microsoft.com/playwright:v...` は browser 実体と system dependencies を提供する base image であり、repo がその上に pinned version の Playwright Server 機能を追加します。
+- runtime の `npx` を避けるのは、local と CI の再現性を揃え、実行時の追加ネットワーク依存を減らすためです。
+- 背景は Playwright の Docker docs を基準にしています: https://playwright.dev/docs/docker
+
 ## Quick Start
 
 `main.py` はサブコマンドで使います。GCOM-C LST の dataset ID は固定値 `10002019` なので、通常は指定不要です。
@@ -104,6 +113,7 @@ uv run python main.py analyze \
 
 ```bash
 uv run pytest
+uv run python scripts/build_playwright_server_image.py
 RUN_GPORTAL_INTEGRATION=1 GPORTAL_USER=... GPORTAL_PASS=... uv run pytest -m integration
 uv run python -m compileall gcom.py main.py administrative_division.py prefecture_bbox.py lst_analysis.py analysis scripts
 ```
@@ -113,6 +123,7 @@ uv run python -m compileall gcom.py main.py administrative_division.py prefectur
 GitHub Actions では `workflow_dispatch` の手動実行で実ダウンロード確認を行います。
 integration テストは実際に G-Portal から 1 件ダウンロードし、その HDF5 を共有 fixture として使って検証します。
 ローカルで integration テストを流すときは `RUN_GPORTAL_INTEGRATION=1` と `GPORTAL_USER` / `GPORTAL_PASS` が必要です。
+CI でも local と同じく public Playwright base image を使って server image を build してから integration テストを実行します。
 workflow では `secrets` を job-level `if` で直接判定せず、step-level の preflight で確認します。credentials 未設定時は失敗ではなくスキップ扱いになります。
 
 GitHub Secrets:

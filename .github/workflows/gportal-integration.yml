@@ -39,6 +39,10 @@ jobs:
         if: steps.preflight.outputs.enabled == 'true'
         run: uv sync --group dev
 
+      - name: Build Playwright server image
+        if: steps.preflight.outputs.enabled == 'true'
+        run: uv run python scripts/build_playwright_server_image.py
+
       - name: Run G-Portal integration tests
         if: steps.preflight.outputs.enabled == 'true'
         env:
