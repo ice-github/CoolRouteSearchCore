@@ -385,6 +385,7 @@ def test_build_sampling_surface_figure_uses_temperature_for_height_and_color() -
     assert list(point_trace.z) == [24.0, 28.0, 30.0, 32.0]
     assert point_trace.marker.size == SAMPLING_SPHERE_MARKER_SIZE
     assert list(point_trace.marker.color) == [24.0, 28.0, 30.0, 32.0]
+    assert point_trace.meta == {"role": "samples"}
     assert figure.layout.scene.zaxis.range is None
     assert figure.layout.scene.camera.to_plotly_json() == sampling_surface_default_camera()
     assert figure.layout.scene.xaxis.title.text == "Longitude"
@@ -790,6 +791,71 @@ def test_point_cloud_render_matches_2d_preview_before_surface(tmp_path: Path) ->
         point_cloud_image.close()
 
     assert surface_path.exists()
+
+
+def test_write_sampling_surface_embeds_samples_toggle_checkbox(tmp_path: Path) -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
+    points = [
+        SamplingPoint(
+            point_id=1,
+            lon=136.85,
+            lat=35.05,
+            x_metric=1_000.0,
+            y_metric=2_000.0,
+            x_6668=1_000.0,
+            y_6668=2_000.0,
+            sum_lst_c=72.0,
+            min_lst_c=20.0,
+            max_lst_c=28.0,
+            valid_count=3,
+        ),
+        SamplingPoint(
+            point_id=2,
+            lon=136.86,
+            lat=35.06,
+            x_metric=2_000.0,
+            y_metric=3_000.0,
+            x_6668=2_000.0,
+            y_6668=3_000.0,
+            sum_lst_c=96.0,
+            min_lst_c=26.0,
+            max_lst_c=32.0,
+            valid_count=3,
+        ),
+    ]
+    surface_path = tmp_path / "surface.html"
+
+    write_sampling_surface(str(surface_path), polygon, points, "mean")
+
+    html = surface_path.read_text(encoding="utf-8")
+
+    assert runner.SAMPLING_SURFACE_DIV_ID in html
+    assert runner.SAMPLING_SURFACE_TOGGLE_LABEL in html
+    assert 'trace.meta && trace.meta.role === \'samples\'' in html
+    assert "Plotly.restyle(graphDiv, {visible: checkbox.checked}, [samplesTraceIndex]);" in html
+
+
+def test_write_sampling_surface_without_valid_points_keeps_simple_html(tmp_path: Path) -> None:
+    polygon = Polygon([(136.8, 35.0), (136.9, 35.0), (136.9, 35.1), (136.8, 35.1)])
+    points = [
+        SamplingPoint(
+            point_id=1,
+            lon=136.85,
+            lat=35.05,
+            x_metric=1_000.0,
+            y_metric=2_000.0,
+            x_6668=1_000.0,
+            y_6668=2_000.0,
+            valid_count=0,
+        )
+    ]
+    surface_path = tmp_path / "surface_empty.html"
+
+    write_sampling_surface(str(surface_path), polygon, points, "mean")
+
+    html = surface_path.read_text(encoding="utf-8")
+
+    assert html == "<html><body><p>No valid temperature samples available for 3D surface.</p></body></html>"
 
 
 def test_draw_points_uses_fill_only_without_outline() -> None:

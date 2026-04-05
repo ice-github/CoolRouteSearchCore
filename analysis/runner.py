@@ -36,6 +36,8 @@ LST_VIS_MISSING_COLOR = (185, 185, 185)
 LST_VIS_STATS = ("max", "mean", "min")
 SAMPLING_SURFACE_Z_SCALE = 2.0
 SAMPLING_SPHERE_MARKER_SIZE = 3.5
+SAMPLING_SURFACE_DIV_ID = "sampling-surface-plot"
+SAMPLING_SURFACE_TOGGLE_LABEL = "3D球を表示"
 LST_VIS_STOPS: list[tuple[float, tuple[int, int, int]]] = [
     (0.0, (49, 54, 149)),
     (0.18, (69, 117, 180)),
@@ -827,6 +829,57 @@ def _sampling_surface_grid(
     return x_grid, y_grid, z_grid
 
 
+def _sampling_surface_toggle_post_script() -> str:
+    toggle_label = json.dumps(SAMPLING_SURFACE_TOGGLE_LABEL, ensure_ascii=False)
+    return f"""
+(function() {{
+    const graphDiv = document.getElementById('{{plot_id}}');
+    if (!graphDiv || !graphDiv.parentNode) {{
+        return;
+    }}
+
+    const samplesTraceIndex = graphDiv.data.findIndex(
+        (trace) => trace.meta && trace.meta.role === 'samples'
+    );
+    if (samplesTraceIndex === -1) {{
+        return;
+    }}
+
+    const controlsId = `${{graphDiv.id}}-samples-toggle`;
+    if (document.getElementById(controlsId)) {{
+        return;
+    }}
+
+    const controls = document.createElement('div');
+    controls.id = controlsId;
+    controls.style.margin = '0 0 12px 0';
+    controls.style.fontFamily = 'sans-serif';
+    controls.style.fontSize = '14px';
+
+    const label = document.createElement('label');
+    label.style.display = 'inline-flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '8px';
+    label.style.cursor = 'pointer';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = graphDiv.data[samplesTraceIndex].visible !== false;
+    checkbox.setAttribute('aria-label', {toggle_label});
+    checkbox.addEventListener('change', () => {{
+        Plotly.restyle(graphDiv, {{visible: checkbox.checked}}, [samplesTraceIndex]);
+    }});
+
+    const text = document.createTextNode({toggle_label});
+
+    label.appendChild(checkbox);
+    label.appendChild(text);
+    controls.appendChild(label);
+    graphDiv.parentNode.insertBefore(controls, graphDiv);
+}})();
+""".strip()
+
+
 def build_sampling_surface_figure(
     polygon_wgs84: Polygon,
     points: list[SamplingPoint],
@@ -874,6 +927,7 @@ def build_sampling_surface_figure(
         ),
         hovertemplate="lon=%{x:.6f}<br>lat=%{y:.6f}<br>temperature=%{z:.2f} °C<extra></extra>",
         name="Samples",
+        meta={"role": "samples"},
     )
 
     figure = go.Figure(data=[*_polygon_outline_traces(polygon_wgs84, outline_z), surface, spheres])
@@ -949,7 +1003,13 @@ def write_sampling_surface(
         return str(path)
 
     figure = build_sampling_surface_figure(polygon_wgs84, points, stat)
-    figure.write_html(str(path), include_plotlyjs=True, full_html=True)
+    figure.write_html(
+        str(path),
+        include_plotlyjs=True,
+        full_html=True,
+        div_id=SAMPLING_SURFACE_DIV_ID,
+        post_script=_sampling_surface_toggle_post_script(),
+    )
     return str(path)
 
 
