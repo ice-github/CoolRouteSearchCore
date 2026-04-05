@@ -118,6 +118,7 @@ class GcomDownloader:
     _playwright_base_image = f"mcr.microsoft.com/playwright:v{_playwright_version}-noble"
     _server_image_name = f"coolroutesearchcore-playwright-server:v{_playwright_version}"
     _server_start_timeout_seconds = 30.0
+    _server_shm_size = "512m"
 
     def __init__(self, download_dir: str, workspace_dir: str, username: str, password: str) -> None:
         self._repo_root = Path(__file__).resolve().parent
@@ -226,7 +227,8 @@ class GcomDownloader:
             "-d",
             "--rm",
             "--init",
-            "--ipc=host",
+            "--shm-size",
+            self._server_shm_size,
             "--name",
             container_name,
             "-p",

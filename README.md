@@ -24,6 +24,7 @@ uv sync --group dev
 - `uv` で入るのは host Python client だけなので、Docker 内で `playwright run-server` を起動するには server image 側にも Playwright package が必要です。
 - official の `mcr.microsoft.com/playwright:v...` は browser 実体と system dependencies を提供する base image であり、repo がその上に pinned version の Playwright Server 機能を追加します。
 - runtime の `npx` を避けるのは、local と CI の再現性を揃え、実行時の追加ネットワーク依存を減らすためです。
+- Playwright Server の `docker run` はこの repo では `--ipc=host` を必須にせず、互換性優先で通常の Docker IPC を使います。Chromium の共有メモリ不足を避けるため、代わりに `--shm-size=512m` を指定します。
 - 背景は Playwright の Docker docs を基準にしています: https://playwright.dev/docs/docker
 
 ## Quick Start

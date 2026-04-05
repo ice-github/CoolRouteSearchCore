@@ -127,7 +127,9 @@ def test_build_playwright_server_command_uses_built_server_image(tmp_path: Path)
 
     assert command[:4] == ["docker", "run", "-d", "--rm"]
     assert "--init" in command
-    assert "--ipc=host" in command
+    assert "--ipc=host" not in command
+    assert "--shm-size" in command
+    assert GcomDownloader._server_shm_size in command
     assert "--name" in command
     assert "gportal-playwright-test" in command
     assert GcomDownloader._server_image_name in command
@@ -177,6 +179,9 @@ def test_start_playwright_server_launches_container_and_waits(
 
     command = captured["command"]
     assert isinstance(command, list)
+    assert "--ipc=host" not in command
+    assert "--shm-size" in command
+    assert GcomDownloader._server_shm_size in command
     assert GcomDownloader._server_image_name in command
     assert "gportal-playwright-abcdef12" in command
 
