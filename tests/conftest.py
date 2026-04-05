@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from shapely.geometry import Point
 
 from gcom import CSWWrapper, GcomDownloader
 from prefecture_bbox import get_prefecture_bbox
@@ -26,17 +27,24 @@ def downloaded_hdf5_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
         pytest.skip("set RUN_GPORTAL_INTEGRATION=1 to run the real G-Portal integration tests")
 
     username, password = _integration_credentials()
-    urls = CSWWrapper().get_hdf5_urls(
+    scenes = CSWWrapper().get_hdf5_scenes(
         "10002019",
         datetime(2024, 1, 1),
         datetime(2024, 1, 2),
         get_prefecture_bbox("愛知県"),
     )
-    assert urls, "expected at least one GCOM-C HDF5 URL from CSW"
+    assert scenes, "expected at least one GCOM-C HDF5 scene from CSW"
+
+    nagoya_point = Point(136.8855, 35.1077)
+    target_scene = next((scene for scene in scenes if scene.geometry_wgs84.covers(nagoya_point)), None)
+    assert target_scene is not None, (
+        "expected a GCOM-C HDF5 scene covering the Nagoya integration point; "
+        f"candidates={[scene.identifier for scene in scenes]}"
+    )
 
     base_dir = tmp_path_factory.mktemp("gportal_integration")
     downloader = GcomDownloader(str(base_dir / "download"), str(base_dir / "workspace"), username, password)
-    paths = downloader.get_downloaded_file_paths(urls[:1])
+    paths = downloader.get_downloaded_file_paths([target_scene.url])
 
     assert len(paths) == 1
     downloaded_path = Path(paths[0])

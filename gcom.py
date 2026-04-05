@@ -12,10 +12,19 @@ import requests
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+from shapely.geometry import shape
+from shapely.geometry.base import BaseGeometry
 
 
 def _log(message: str) -> None:
     print(message, flush=True)
+
+
+@dataclass(frozen=True)
+class Hdf5SceneRecord:
+    url: str
+    identifier: str
+    geometry_wgs84: BaseGeometry
 
 
 class CSWWrapper:
@@ -61,12 +70,29 @@ class CSWWrapper:
             current = next_end
         return intervals
 
-    def get_hdf5_urls(self, dataset_id: str, utc_start: datetime, utc_end: datetime, bbox: list[float]) -> list[str]:
+    def _scene_record_from_feature(self, feature: dict) -> Hdf5SceneRecord | None:
+        properties = feature.get("properties", {})
+        product = properties.get("product", {})
+        filename = product.get("fileName")
+        geometry = feature.get("geometry")
+        if not filename or geometry is None:
+            return None
+
+        identifier = properties.get("identifier") or os.path.basename(urlparse(filename).path)
+        return Hdf5SceneRecord(
+            url=filename,
+            identifier=str(identifier),
+            geometry_wgs84=shape(geometry),
+        )
+
+    def get_hdf5_scenes(
+        self, dataset_id: str, utc_start: datetime, utc_end: datetime, bbox: list[float]
+    ) -> list[Hdf5SceneRecord]:
         if len(bbox) != 4:
             raise ValueError("bbox must be [min_lon, min_lat, max_lon, max_lat]")
 
         intervals = self._split_intervals(utc_start, utc_end, 3)
-        h5_urls: list[str] = []
+        scenes: list[Hdf5SceneRecord] = []
         _log(
             f"[csw] querying dataset={dataset_id} intervals={len(intervals)} "
             f"start={utc_start.isoformat()} end={utc_end.isoformat()} bbox={bbox}"
@@ -84,17 +110,20 @@ class CSWWrapper:
                 ",".join(str(v) for v in bbox),
             )
             data = self._fetch_data(url)
-            interval_urls = 0
+            interval_scenes = 0
             for feature in data.get("features", []):
-                product = feature.get("properties", {}).get("product", {})
-                filename = product.get("fileName")
-                if filename:
-                    h5_urls.append(filename)
-                    interval_urls += 1
-            _log(f"[csw] interval {index}/{len(intervals)} yielded {interval_urls} URL(s)")
+                record = self._scene_record_from_feature(feature)
+                if record is None:
+                    continue
+                scenes.append(record)
+                interval_scenes += 1
+            _log(f"[csw] interval {index}/{len(intervals)} yielded {interval_scenes} URL(s)")
 
-        _log(f"[csw] found {len(h5_urls)} URL(s) total")
-        return h5_urls
+        _log(f"[csw] found {len(scenes)} URL(s) total")
+        return scenes
+
+    def get_hdf5_urls(self, dataset_id: str, utc_start: datetime, utc_end: datetime, bbox: list[float]) -> list[str]:
+        return [scene.url for scene in self.get_hdf5_scenes(dataset_id, utc_start, utc_end, bbox)]
 
 
 class JPortalLogin:

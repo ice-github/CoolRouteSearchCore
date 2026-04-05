@@ -2,9 +2,10 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from shapely.geometry import Point, Polygon
 
 import gcom
-from gcom import CSWWrapper, GcomDownloader, _PlaywrightServer
+from gcom import CSWWrapper, GcomDownloader, Hdf5SceneRecord, _PlaywrightServer
 
 
 def test_split_intervals_chunks_by_day_window() -> None:
@@ -47,6 +48,59 @@ def test_fetch_data_raises_clear_error_for_non_json_response(monkeypatch: pytest
 
     with pytest.raises(RuntimeError, match="CSW request did not return JSON"):
         wrapper._fetch_data("https://example.com")
+
+
+def test_get_hdf5_scenes_returns_scene_geometry_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    wrapper = CSWWrapper()
+    data = {
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[(136.0, 35.0), (137.0, 35.0), (137.0, 36.0), (136.0, 36.0), (136.0, 35.0)]],
+                },
+                "properties": {
+                    "identifier": "scene-1",
+                    "product": {"fileName": "https://example.com/scene-1.h5"},
+                },
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[(137.0, 35.0), (138.0, 35.0), (138.0, 36.0), (137.0, 36.0), (137.0, 35.0)]],
+                },
+                "properties": {
+                    "identifier": "scene-2",
+                    "product": {"fileName": "https://example.com/scene-2.h5"},
+                },
+            },
+        ]
+    }
+
+    monkeypatch.setattr(wrapper, "_fetch_data", lambda url: data)
+
+    scenes = wrapper.get_hdf5_scenes("10002019", datetime(2024, 1, 1), datetime(2024, 1, 2), [136, 35, 138, 36])
+
+    assert [scene.url for scene in scenes] == ["https://example.com/scene-1.h5", "https://example.com/scene-2.h5"]
+    assert [scene.identifier for scene in scenes] == ["scene-1", "scene-2"]
+    assert scenes[0].geometry_wgs84.covers(Point(136.5, 35.5))
+    assert scenes[1].geometry_wgs84.covers(Point(137.5, 35.5))
+
+
+def test_get_hdf5_urls_preserves_scene_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    wrapper = CSWWrapper()
+    scenes = [
+        Hdf5SceneRecord("https://example.com/scene-1.h5", "scene-1", Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])),
+        Hdf5SceneRecord("https://example.com/scene-2.h5", "scene-2", Polygon([(1, 0), (2, 0), (2, 1), (1, 1)])),
+    ]
+
+    monkeypatch.setattr(wrapper, "get_hdf5_scenes", lambda dataset_id, utc_start, utc_end, bbox: scenes)
+
+    urls = wrapper.get_hdf5_urls("10002019", datetime(2024, 1, 1), datetime(2024, 1, 2), [136, 35, 138, 36])
+
+    assert urls == ["https://example.com/scene-1.h5", "https://example.com/scene-2.h5"]
 
 
 def test_get_filename_from_url_returns_basename(tmp_path: Path) -> None:
